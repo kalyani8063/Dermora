@@ -1,9 +1,10 @@
-﻿import re
+import re
 
 
 DIET_KEYWORDS = ("balanced", "junk", "healthy", "protein", "salad", "sugary", "clean")
 STRESS_KEYWORDS = ("low", "medium", "moderate", "high")
 ACTIVITY_KEYWORDS = ("walk", "workout", "gym", "yoga", "run", "exercise", "cycling")
+SYMPTOM_KEYWORDS = ("acne", "redness", "dryness", "irritation", "itching", "oiliness", "sensitivity")
 
 
 def _extract_first(pattern: str, text: str):
@@ -31,6 +32,7 @@ def parse_health_text(text):
 
     diet = next((keyword for keyword in DIET_KEYWORDS if keyword in lowered), "")
     stress = next((keyword for keyword in STRESS_KEYWORDS if keyword in lowered), "")
+    symptoms = [keyword for keyword in SYMPTOM_KEYWORDS if keyword in lowered]
 
     if not activity:
         duration = _extract_first(r"(\d+\s*(?:mins|minutes|hrs|hours))", lowered)
@@ -44,4 +46,8 @@ def parse_health_text(text):
         "sleep": float(sleep) if sleep else None,
         "stress": stress,
         "menstrual_cycle": f"day {menstrual_cycle}" if menstrual_cycle else "",
+        "symptoms": symptoms,
+        "notes": text.strip(),
+        "source": "text_parser",
+        "tags": ["text-log", "nlp"] if text.strip() else ["text-log"],
     }

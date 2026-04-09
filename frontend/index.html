@@ -1,254 +1,53 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dermora Health Intelligence</title>
+    <title>Dermora | Skin Intelligence</title>
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
-  <body>
-    <main class="app-shell">
-      <section id="auth-screen" class="screen auth-screen">
-        <div class="auth-orb auth-orb-one"></div>
-        <div class="auth-orb auth-orb-two"></div>
-        <div class="auth-orb auth-orb-three"></div>
+  <body data-page="landing">
+    <header class="site-header">
+      <div class="nav-shell">
+        <a href="/" class="nav-brand"><img src="/assets/images/logo.png" alt="Dermora logo" class="nav-logo" /><span class="nav-brand-text">Dermora</span></a>
+        <nav class="nav-actions" aria-label="Primary">
+          <a class="button-ghost" href="/login">Login</a>
+          <a class="button-primary" href="/register">Register</a>
+        </nav>
+      </div>
+    </header>
 
-        <div class="hero-card landing-shell">
-          <div class="landing-story">
-            <div class="brand-ribbon">Dermora</div>
-            <p class="eyebrow">AI Skin and Health Intelligence</p>
-            <h1>
-              <span class="brand-mark">Dermora</span>
-              helps you know your skin and get insights that actually mean something.
-            </h1>
-            <p class="subcopy slogan-copy">
-              Know your skin, understand your daily signals, and receive intelligent
-              insight across skin scans, lifestyle habits, and conversational health logging.
-            </p>
+    <main class="page-shell landing-main">
+      <section class="hero-layout hero-layout-centered">
+        <div class="hero-copy-column hero-copy-column-centered">
+          <p class="eyebrow">AI Skin Intelligence Platform</p>
+          <h1 class="hero-brand">Dermora</h1>
 
-            <div class="hero-chip-row">
-              <span class="hero-chip">Skin Analysis</span>
-              <span class="hero-chip">Lifestyle Tracking</span>
-              <span class="hero-chip">Text-to-Log Parsing</span>
-            </div>
-
-            <div class="intro-grid">
-              <article class="intro-panel spotlight-panel">
-                <p class="panel-label">Why Dermora</p>
-                <h3>From photo to pattern recognition</h3>
-                <p>
-                  Dermora connects visual skin analysis with hydration, sleep, stress,
-                  and routine signals so your report feels personal instead of generic.
-                </p>
-                <div class="pulse-line"></div>
-                <div class="story-stats">
-                  <div class="story-stat">
-                    <strong>1 scan</strong>
-                    <span>visual overlay report</span>
-                  </div>
-                  <div class="story-stat">
-                    <strong>3 inputs</strong>
-                    <span>image, habits, text logs</span>
-                  </div>
-                  <div class="story-stat">
-                    <strong>Live trends</strong>
-                    <span>insights that evolve over time</span>
-                  </div>
-                </div>
-              </article>
-
-              <article class="intro-panel floating-panel delayed-float">
-                <p class="panel-label">Intelligence Stack</p>
-                <ul class="feature-list">
-                  <li>Overlay-based skin reports with modular ML swap support</li>
-                  <li>Personalized recommendations shaped by skin type and daily habits</li>
-                  <li>WhatsApp-ready text parsing for quick health logging</li>
-                  <li>Progress signals that connect routine changes to skin outcomes</li>
-                </ul>
-              </article>
-            </div>
+          <div class="rotating-tagline" aria-live="polite">
+            <span class="tagline-prefix">Now with</span>
+            <span id="tagline-text" class="tagline-text">AI-powered skin insights</span>
           </div>
 
-          <div class="auth-experience">
-            <div class="auth-intro-card floating-panel">
-              <p class="panel-label">Start Here</p>
-              <h2>Your personalized skin intelligence workspace</h2>
-              <p class="compact-copy">
-                Create a profile to begin tracking patterns, or log in to continue your analysis journey.
-              </p>
+          <p class="hero-description">
+            Dermora combines AI-based skin analysis with lifestyle tracking and intelligent
+            insights to help you understand and improve your skin health over time.
+          </p>
+
+          <div class="hero-actions">
+            <a class="button-primary hero-button" href="/register">Start Free</a>
+            <a class="button-secondary hero-button" href="/login">Login</a>
+          </div>
+
+          <div class="hero-note-row">
+            <div class="hero-note-card">
+              <span class="note-label">Visual Analysis</span>
+              <strong>Scan, score, and compare progress</strong>
             </div>
-
-            <div class="auth-grid">
-              <article class="panel auth-panel register-panel">
-                <div class="auth-card-header">
-                  <p class="panel-label">New to Dermora</p>
-                  <h3>Create Account</h3>
-                </div>
-                <form id="register-form" class="form-grid">
-                  <input id="register-name" type="text" placeholder="Name" required />
-                  <input id="register-email" type="email" placeholder="Email" required />
-                  <input id="register-password" type="password" placeholder="Password" required />
-                  <input id="register-age" type="number" placeholder="Age" min="1" />
-                  <input id="register-gender" type="text" placeholder="Gender" />
-                  <input id="register-skin-type" type="text" placeholder="Skin type" />
-                  <button type="submit">Join Dermora</button>
-                  <p id="register-status" class="form-status"></p>
-                </form>
-              </article>
-
-              <article class="panel auth-panel login-panel">
-                <div class="auth-card-header">
-                  <p class="panel-label">Welcome Back</p>
-                  <h3>Login</h3>
-                </div>
-                <form id="login-form" class="form-grid">
-                  <input id="login-email" type="email" placeholder="Email" required />
-                  <input id="login-password" type="password" placeholder="Password" required />
-                  <button type="submit">Enter Dashboard</button>
-                  <p id="login-status" class="form-status"></p>
-                </form>
-              </article>
+            <div class="hero-note-card">
+              <span class="note-label">Health Context</span>
+              <strong>Connect hydration, sleep, stress, and skin trends</strong>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section id="dashboard-screen" class="screen hidden">
-        <div class="dashboard-header">
-          <div>
-            <p class="eyebrow">Multi-Modal Health Intelligence</p>
-            <h2>Welcome back, <span id="user-name">User</span></h2>
-            <p id="user-meta" class="subcopy compact-copy"></p>
-          </div>
-          <div class="header-actions">
-            <button id="voice-guide-button" class="secondary-button" type="button">Voice Guide</button>
-            <button id="logout-button" class="secondary-button" type="button">Logout</button>
-          </div>
-        </div>
-
-        <div class="result-grid">
-          <article class="panel hero-metric-panel">
-            <div class="hero-metric-copy">
-              <p class="eyebrow">Skin Analysis</p>
-              <h3 id="score-value">--</h3>
-              <p class="metric-caption">Skin Score</p>
-              <p id="summary-value" class="summary-copy">Run an analysis to generate your first report.</p>
-            </div>
-            <div class="hero-metric-stack">
-              <div class="mini-stat">
-                <span>Confidence</span>
-                <strong id="confidence-value">--</strong>
-              </div>
-              <div class="mini-stat">
-                <span>Trend</span>
-                <strong id="trend-status-value">--</strong>
-              </div>
-              <div class="mini-stat">
-                <span>Prediction</span>
-                <strong id="prediction-value">--</strong>
-              </div>
-            </div>
-          </article>
-
-          <article class="panel">
-            <h3>Face Capture</h3>
-            <form id="analyze-form" class="form-grid">
-              <label class="upload-dropzone" for="image-input">
-                <input id="image-input" name="file" type="file" accept="image/*" required />
-                <span class="upload-title">Choose image</span>
-                <span class="upload-caption">Use even lighting and keep your face centered.</span>
-              </label>
-              <div id="preview-wrapper" class="preview-wrapper hidden">
-                <img id="preview-image" alt="Selected preview" />
-              </div>
-              <button id="analyze-button" type="submit">Analyze Skin</button>
-              <p id="analyze-status" class="form-status"></p>
-            </form>
-          </article>
-
-          <article class="panel image-comparison-panel">
-            <h3>Visual Report</h3>
-            <div class="image-compare-grid">
-              <div>
-                <p class="panel-label">Original</p>
-                <div class="image-frame"><img id="result-image" alt="Original uploaded skin image" /></div>
-              </div>
-              <div>
-                <p class="panel-label">Overlay</p>
-                <div class="image-frame"><img id="processed-image" alt="Processed skin image with overlays" /></div>
-              </div>
-            </div>
-          </article>
-
-          <article class="panel">
-            <h3>Analysis Snapshot</h3>
-            <div class="summary-stats">
-              <div class="stat-card stat-card-highlight"><span>Acne Count</span><strong id="acne-count-value">--</strong></div>
-              <div class="stat-card"><span>Severity</span><strong id="severity-value">--</strong></div>
-              <div class="stat-card"><span>Pigmentation</span><strong id="pigmentation-coverage-value">--</strong></div>
-              <div class="stat-card"><span>Boxes</span><strong id="boxes-count-value">--</strong></div>
-            </div>
-          </article>
-
-          <article class="panel">
-            <h3>Progress</h3>
-            <div class="progress-grid">
-              <div class="stat-card"><span>Previous Acne</span><strong id="previous-acne-count-value">--</strong></div>
-              <div class="stat-card"><span>Current Acne</span><strong id="current-acne-count-value">--</strong></div>
-              <div class="stat-card"><span>Change</span><strong id="trend-change-value">--</strong></div>
-              <div class="stat-card"><span>Analysis Time</span><strong id="analysis-date-value">--</strong></div>
-            </div>
-          </article>
-
-          <article class="panel">
-            <h3>Health Tracker</h3>
-            <form id="health-log-form" class="form-grid two-column-grid">
-              <input id="water-input" type="number" step="0.1" placeholder="Water intake (L)" />
-              <input id="activity-input" type="text" placeholder="Activity" />
-              <input id="diet-input" type="text" placeholder="Diet" />
-              <input id="sleep-input" type="number" step="0.1" placeholder="Sleep (hours)" />
-              <input id="stress-input" type="text" placeholder="Stress" />
-              <input id="menstrual-input" type="text" placeholder="Menstrual cycle" />
-              <button type="submit">Save Health Log</button>
-              <p id="health-status" class="form-status"></p>
-            </form>
-          </article>
-
-          <article class="panel">
-            <h3>Chat Input</h3>
-            <form id="text-log-form" class="form-grid">
-              <textarea id="text-log-input" rows="4" placeholder="I drank 2L water and worked out for 30 mins"></textarea>
-              <button type="submit">Parse and Save</button>
-              <p id="text-log-status" class="form-status"></p>
-            </form>
-          </article>
-
-          <article class="panel">
-            <h3>Zone Breakdown</h3>
-            <div id="zones-list" class="zone-list"></div>
-          </article>
-
-          <article class="panel">
-            <h3>Insights</h3>
-            <ul id="insights-list" class="pill-list"></ul>
-          </article>
-
-          <article class="panel">
-            <h3>Correlations</h3>
-            <ul id="correlations-list" class="pill-list"></ul>
-          </article>
-
-          <article class="panel">
-            <h3>Recommendations</h3>
-            <ul id="recommendations-list" class="pill-list"></ul>
-          </article>
-
-          <article class="panel recent-logs-panel">
-            <h3>Recent Health Logs</h3>
-            <div id="recent-logs" class="pill-list empty-state-list">
-              <p class="muted-copy">No logs yet. Add a manual log or send a message above.</p>
-            </div>
-          </article>
         </div>
       </section>
     </main>

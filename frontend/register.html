@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Register | Dermora</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body data-page="register">
+    <header class="site-header site-header-solid">
+      <div class="nav-shell">
+        <a href="/" class="nav-brand"><img src="/assets/images/logo.png" alt="Dermora logo" class="nav-logo" /><span class="nav-brand-text">Dermora</span></a>
+        <nav class="nav-actions" aria-label="Primary">
+          <a class="button-ghost" href="/">Home</a>
+          <a class="button-secondary" href="/login">Login</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="page-shell auth-main">
+      <section class="auth-page-layout register-layout">
+        <div class="auth-brand-column">
+          <div class="auth-copy-card">
+            <p class="eyebrow">Create Account</p>
+            <h1 class="auth-hero-title">Verify your email and join Dermora</h1>
+            <p class="auth-hero-copy">
+              Registration uses OTP-based email verification before password setup for
+              stronger account security.
+            </p>
+            <div class="auth-feature-list">
+              <div class="auth-feature-item">
+                <strong>Verified email first</strong>
+                <span>Only OTP-verified emails can complete account creation.</span>
+              </div>
+              <div class="auth-feature-item">
+                <strong>Secure onboarding</strong>
+                <span>After first login, we guide users through a smooth quiz flow.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="auth-form-column">
+          <article class="card auth-form-card register-card">
+            <div class="card-heading">
+              <p class="eyebrow">Register</p>
+              <h2>Create your Dermora account</h2>
+            </div>
+
+            <form id="register-form" class="form-grid two-column-grid">
+              <label class="field field-span-full">
+                <span class="field-label">Full Name</span>
+                <input id="register-name" type="text" placeholder="Your full name" required />
+              </label>
+
+              <label class="field field-span-full">
+                <span class="field-label">Email</span>
+                <input id="register-email" type="email" placeholder="you@example.com" required />
+              </label>
+
+              <button id="register-send-otp" class="button-secondary field-span-full" type="button">Send OTP</button>
+
+              <div id="register-otp-panel" class="otp-panel field-span-full hidden">
+                <div class="card-heading otp-heading">
+                  <p class="eyebrow">Email Verification</p>
+                  <h3>Enter the 6-digit OTP</h3>
+                </div>
+
+                <div class="otp-input-row" aria-label="Register OTP inputs">
+                  <input class="otp-input" type="text" inputmode="numeric" maxlength="1" data-register-otp-input />
+                  <input class="otp-input" type="text" inputmode="numeric" maxlength="1" data-register-otp-input />
+                  <input class="otp-input" type="text" inputmode="numeric" maxlength="1" data-register-otp-input />
+                  <input class="otp-input" type="text" inputmode="numeric" maxlength="1" data-register-otp-input />
+                  <input class="otp-input" type="text" inputmode="numeric" maxlength="1" data-register-otp-input />
+                  <input class="otp-input" type="text" inputmode="numeric" maxlength="1" data-register-otp-input />
+                </div>
+
+                <div class="otp-meta-row">
+                  <span id="register-otp-timer" class="helper-text">Resend available in 00:30</span>
+                  <button id="register-resend-otp" class="text-button" type="button" disabled>Resend OTP</button>
+                </div>
+
+                <p id="register-otp-dev-hint" class="helper-text helper-highlight hidden"></p>
+                <button id="register-verify-otp" class="button-primary" type="button">Verify OTP</button>
+              </div>
+
+              <label class="field field-span-full">
+                <span class="field-label">Password</span>
+                <input id="register-password" type="password" placeholder="Set a secure password" required disabled />
+              </label>
+
+              <label class="field">
+                <span class="field-label">Age</span>
+                <input id="register-age" type="number" min="1" placeholder="24" disabled />
+              </label>
+
+              <label class="field">
+                <span class="field-label">Gender</span>
+                <select id="register-gender" disabled>
+                  <option value="">Select gender</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Others">Others</option>
+                </select>
+              </label>
+
+              <label class="field field-span-full">
+                <span class="field-label">Birthdate</span>
+                <input id="register-birthdate" type="date" disabled />
+              </label>
+
+              <button id="register-submit" class="button-primary field-span-full" type="submit" disabled>Create Account</button>
+              <p id="register-status" class="form-status field-span-full" aria-live="polite"></p>
+            </form>
+
+            <p class="helper-text">Already have an account? <a href="/login">Login here</a>.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

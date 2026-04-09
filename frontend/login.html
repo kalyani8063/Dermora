@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login | Dermora</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body data-page="login">
+    <header class="site-header site-header-solid">
+      <div class="nav-shell">
+        <a href="/" class="nav-brand"><img src="/assets/images/logo.png" alt="Dermora logo" class="nav-logo" /><span class="nav-brand-text">Dermora</span></a>
+        <nav class="nav-actions" aria-label="Primary">
+          <a class="button-ghost" href="/">Home</a>
+          <a class="button-secondary" href="/register">Create Account</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="page-shell auth-main">
+      <section class="auth-page-layout">
+        <div class="auth-brand-column">
+          <div class="auth-copy-card">
+            <p class="eyebrow">Secure Access</p>
+            <h1 class="auth-hero-title">Sign in to your Dermora workspace</h1>
+            <p class="auth-hero-copy">
+              Use your email and password to continue into your dashboard. If you forget
+              your password, reset it securely with a one-time OTP.
+            </p>
+            <div class="auth-feature-list">
+              <div class="auth-feature-item">
+                <strong>Password login</strong>
+                <span>Fast sign-in with strong password hashing on backend.</span>
+              </div>
+              <div class="auth-feature-item">
+                <strong>Secure recovery</strong>
+                <span>Forgot password flow uses OTP verification with expiry limits.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="auth-form-column">
+          <article class="card auth-form-card">
+            <div class="card-heading">
+              <p class="eyebrow">Login</p>
+              <h2>Access your account</h2>
+              <p class="body-copy compact-copy">Enter your registered email and password.</p>
+            </div>
+
+            <form id="login-form" class="form-stack">
+              <label class="field">
+                <span class="field-label">Email</span>
+                <input id="login-email" type="email" placeholder="you@example.com" required />
+              </label>
+              <label class="field">
+                <span class="field-label">Password</span>
+                <input id="login-password" type="password" placeholder="Enter your password" required />
+              </label>
+              <button id="login-submit" class="button-primary" type="submit">Login</button>
+            </form>
+
+            <p id="login-status" class="form-status" aria-live="polite"></p>
+            <p class="helper-text"><a href="/reset-password">Forgot Password?</a></p>
+            <p class="helper-text">New to Dermora? <a href="/register">Create an account</a>.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

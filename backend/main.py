@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import shutil
 import uuid
 
@@ -8,12 +8,31 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.db import get_database_status
-from backend.schemas.auth import AuthResponse, LoginRequest, RegisterRequest
+from backend.schemas.auth import (
+    AuthResponse,
+    EmailOtpRequest,
+    LoginRequest,
+    OnboardingRequest,
+    OtpRequestResponse,
+    OtpVerifyRequest,
+    PasswordResetConfirmRequest,
+    RegisterOtpSendRequest,
+    RegisterRequest,
+)
 from backend.schemas.health import HealthLogRequest, HealthLogResponse, HealthTextRequest
 from backend.schemas.response import AnalysisResponse
 from backend.services.analyzer import process_skin_analysis
-from backend.services.auth import authenticate_user, create_access_token, get_current_user, hash_password, to_public_user
+from backend.services.auth import (
+    authenticate_user,
+    create_access_token,
+    get_current_user,
+    hash_password,
+    normalize_email,
+    to_public_user,
+)
+from backend.services.email_service import send_welcome_email
 from backend.services.nlp_parser import parse_health_text
+from backend.services.otp_service import clear_otp, ensure_verified, request_otp, verify_otp
 from backend.services.storage import (
     build_health_log_document,
     create_user,
@@ -22,6 +41,8 @@ from backend.services.storage import (
     get_user_by_email,
     save_analysis,
     save_health_log,
+    update_user_fields,
+    update_user_password_by_email,
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -33,7 +54,7 @@ PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(
     title="Dermora Skin Analysis API",
-    version="0.3.0",
+    version="0.5.0",
     description="AI-powered skin and health intelligence starter with modular services.",
 )
 
@@ -50,9 +71,38 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 app.mount("/processed", StaticFiles(directory=PROCESSED_DIR), name="processed")
 
 
+def serve_page(filename: str) -> FileResponse:
+    return FileResponse(FRONTEND_DIR / filename)
+
+
 @app.get("/", include_in_schema=False)
 async def serve_frontend() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "index.html")
+    return serve_page("index.html")
+
+
+@app.get("/login", include_in_schema=False)
+async def serve_login_page() -> FileResponse:
+    return serve_page("login.html")
+
+
+@app.get("/register", include_in_schema=False)
+async def serve_register_page() -> FileResponse:
+    return serve_page("register.html")
+
+
+@app.get("/reset-password", include_in_schema=False)
+async def serve_reset_password_page() -> FileResponse:
+    return serve_page("reset-password.html")
+
+
+@app.get("/dashboard", include_in_schema=False)
+async def serve_dashboard_page() -> FileResponse:
+    return serve_page("dashboard.html")
+
+
+@app.get("/health-logs", include_in_schema=False)
+async def serve_health_logs_page() -> FileResponse:
+    return serve_page("health-logs.html")
 
 
 @app.get("/health/db", response_model=dict)
@@ -60,24 +110,96 @@ def health_db():
     return get_database_status()
 
 
+@app.post("/auth/register/send-otp", response_model=OtpRequestResponse)
+def auth_register_send_otp(payload: RegisterOtpSendRequest) -> OtpRequestResponse:
+    normalized_email = normalize_email(payload.email)
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Please enter your full name.")
+    if get_user_by_email(normalized_email):
+        raise HTTPException(status_code=400, detail="An account with this email already exists.")
+
+    otp_payload = request_otp(normalized_email, purpose="register")
+    return OtpRequestResponse(**otp_payload)
+
+
+@app.post("/auth/register/verify-otp", response_model=dict)
+def auth_register_verify_otp(payload: OtpVerifyRequest):
+    verify_otp(payload.email, purpose="register", otp=payload.otp)
+    return {"message": "OTP verified. You can now complete registration."}
+
+
+@app.post("/auth/password-reset/send-otp", response_model=OtpRequestResponse)
+def auth_password_reset_send_otp(payload: EmailOtpRequest) -> OtpRequestResponse:
+    normalized_email = normalize_email(payload.email)
+    user = get_user_by_email(normalized_email)
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found for that email.")
+
+    otp_payload = request_otp(normalized_email, purpose="password_reset")
+    return OtpRequestResponse(**otp_payload)
+
+
+@app.post("/auth/password-reset/verify-otp", response_model=dict)
+def auth_password_reset_verify_otp(payload: OtpVerifyRequest):
+    verify_otp(payload.email, purpose="password_reset", otp=payload.otp)
+    return {"message": "OTP verified. You can now set a new password."}
+
+
+@app.post("/auth/password-reset/confirm", response_model=dict)
+def auth_password_reset_confirm(payload: PasswordResetConfirmRequest):
+    normalized_email = normalize_email(payload.email)
+    user = get_user_by_email(normalized_email)
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found for that email.")
+
+    if len(payload.new_password.strip()) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+
+    ensure_verified(normalized_email, purpose="password_reset")
+    update_user_password_by_email(normalized_email, hash_password(payload.new_password))
+    clear_otp(normalized_email, purpose="password_reset")
+    return {"message": "Password updated successfully."}
+
+
 @app.post("/register", response_model=AuthResponse)
 def register(payload: RegisterRequest) -> AuthResponse:
-    existing_user = get_user_by_email(payload.email)
+    normalized_email = normalize_email(payload.email)
+    existing_user = get_user_by_email(normalized_email)
     if existing_user:
         raise HTTPException(status_code=400, detail="An account with this email already exists.")
 
+    if len(payload.password.strip()) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+
+    ensure_verified(normalized_email, purpose="register")
+
     user_document = {
         "user_id": uuid.uuid4().hex,
-        "email": payload.email,
+        "email": normalized_email,
         "password_hash": hash_password(payload.password),
         "name": payload.name,
         "age": payload.age,
         "gender": payload.gender,
+        "birthdate": payload.birthdate,
         "skin_type": payload.skin_type,
         "lifestyle": payload.lifestyle,
         "menstrual_health": payload.menstrual_health,
+        "onboarding_completed": False,
+        "acne_type": [],
+        "stress_level": "",
+        "hormonal_issues": "",
+        "diet_type": "",
+        "activity_level": "",
     }
     saved_user = create_user(user_document)
+    clear_otp(normalized_email, purpose="register")
+
+    # Welcome email is best-effort so registration is not blocked if SMTP is unavailable.
+    try:
+        send_welcome_email(normalized_email, payload.name)
+    except Exception:
+        pass
+
     token = create_access_token(saved_user["user_id"])
     return AuthResponse(access_token=token, user=to_public_user(saved_user))
 
@@ -95,6 +217,44 @@ def login(payload: LoginRequest) -> AuthResponse:
 @app.get("/me", response_model=dict)
 def me(current_user=Depends(get_current_user)):
     return {"user": to_public_user(current_user).model_dump()}
+
+
+@app.post("/onboarding", response_model=dict)
+def complete_onboarding(payload: OnboardingRequest, current_user=Depends(get_current_user)):
+    onboarding_data = {
+        "onboarding_completed": True,
+        "acne_type": payload.acne_type,
+        "stress_level": payload.stress_level,
+        "hormonal_issues": payload.hormonal_issues,
+        "diet_type": payload.diet_type,
+        "activity_level": payload.activity_level,
+    }
+    updated_user = update_user_fields(current_user["user_id"], onboarding_data)
+
+    if not payload.skipped:
+        onboarding_log = build_health_log_document(
+            current_user["user_id"],
+            {
+                "stress": payload.stress_level,
+                "activity": payload.activity_level,
+                "diet": payload.diet_type,
+                "symptoms": payload.acne_type,
+                "tags": ["onboarding"],
+                "source": "onboarding_quiz",
+                "additional_context": {"hormonal_issues": payload.hormonal_issues},
+            },
+        )
+        save_health_log(onboarding_log)
+
+    return {
+        "message": "Onboarding completed.",
+        "user": to_public_user(updated_user).model_dump(),
+    }
+
+
+@app.get("/health-logs-data", response_model=dict)
+def health_logs_data(current_user=Depends(get_current_user)):
+    return {"logs": get_recent_logs(current_user["user_id"], limit=12)}
 
 
 @app.post("/log-health", response_model=HealthLogResponse)

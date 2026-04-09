@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Health Logs | Dermora</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body data-page="health-logs">
+    <header class="site-header site-header-solid">
+      <div class="nav-shell">
+        <a href="/dashboard" class="nav-brand"><img src="/assets/images/logo.png" alt="Dermora logo" class="nav-logo" /><span class="nav-brand-text">Dermora</span></a>
+        <nav class="nav-actions" aria-label="Primary">
+          <a href="/dashboard" class="button-secondary">Dashboard</a>
+          <button id="logout-button" class="button-primary" type="button">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="page-shell dashboard-main">
+      <section class="dashboard-shell">
+        <div class="card dashboard-header-card">
+          <div class="dashboard-header-content">
+            <div>
+              <p class="eyebrow">Health Logs</p>
+              <h1 class="dashboard-title">Lifestyle journal for <span id="user-name">User</span></h1>
+              <p id="user-meta" class="body-copy compact-copy"></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="dashboard-grid">
+          <article class="card dashboard-card dashboard-card-wide health-log-card">
+            <div class="card-heading health-log-heading">
+              <div>
+                <p class="eyebrow">Manual Entry</p>
+                <h3>Daily Health Log</h3>
+              </div>
+              <p class="helper-text">Pick the day you are logging, then build the entry through the day.</p>
+            </div>
+            <form id="health-log-form" class="form-grid two-column-grid">
+              <label class="field field-span-full">
+                <span class="field-label">Log Date</span>
+                <input id="entry-date-input" type="date" />
+              </label>
+
+              <div class="health-panel field-span-full hydration-panel-shell">
+                <div class="health-panel-heading">
+                  <p class="eyebrow">Hydration Journey</p>
+                  <h4>Tap a glass as the day goes on</h4>
+                </div>
+                <div class="hydration-visual">
+                  <div class="hydration-bar">
+                    <div id="hydration-fill" class="hydration-fill"></div>
+                  </div>
+                  <div class="hydration-copy">
+                    <strong id="water-total">0.00 L</strong>
+                    <span id="water-caption" class="helper-text">Start the day with your first glass.</span>
+                  </div>
+                </div>
+                <div id="hydration-glasses" class="hydration-glasses" aria-label="Hydration glasses">
+                  <button class="hydration-glass" type="button" data-water-glass="1">1</button>
+                  <button class="hydration-glass" type="button" data-water-glass="2">2</button>
+                  <button class="hydration-glass" type="button" data-water-glass="3">3</button>
+                  <button class="hydration-glass" type="button" data-water-glass="4">4</button>
+                  <button class="hydration-glass" type="button" data-water-glass="5">5</button>
+                  <button class="hydration-glass" type="button" data-water-glass="6">6</button>
+                  <button class="hydration-glass" type="button" data-water-glass="7">7</button>
+                  <button class="hydration-glass" type="button" data-water-glass="8">8</button>
+                </div>
+                <p class="helper-text">Each glass equals about 250 mL.</p>
+                <input id="water-input" type="hidden" value="0" />
+              </div>
+
+              <label class="field">
+                <span class="field-label">Sleep</span>
+                <input id="sleep-input" type="number" step="0.1" placeholder="8.0 hours" />
+              </label>
+              <label class="field">
+                <span class="field-label">Stress</span>
+                <input id="stress-input" type="text" placeholder="Low, moderate, high..." />
+              </label>
+              <label class="field">
+                <span class="field-label">Activity</span>
+                <input id="activity-input" type="text" placeholder="Walk, gym, yoga..." />
+              </label>
+              <label class="field">
+                <span class="field-label">Diet</span>
+                <input id="diet-input" type="text" placeholder="Meals, sugar, dairy, protein..." />
+              </label>
+
+              <div class="health-panel field-span-full stool-panel-shell">
+                <div class="health-panel-heading">
+                  <p class="eyebrow">Digestive Check-In</p>
+                  <h4>Track daily stool passage</h4>
+                </div>
+                <div id="stool-tracker" class="stool-tracker" aria-label="Daily stool passage count">
+                  <button class="stool-step" type="button" data-stool-count="0">No pass</button>
+                  <button class="stool-step" type="button" data-stool-count="1">1 pass</button>
+                  <button class="stool-step" type="button" data-stool-count="2">2 passes</button>
+                  <button class="stool-step" type="button" data-stool-count="3">3 passes</button>
+                  <button class="stool-step" type="button" data-stool-count="4">4+</button>
+                </div>
+                <div class="two-column-grid stool-detail-grid">
+                  <label class="field">
+                    <span class="field-label">How did it feel?</span>
+                    <select id="stool-feel-input">
+                      <option value="">Select one</option>
+                      <option value="Comfortable">Comfortable</option>
+                      <option value="A little strained">A little strained</option>
+                      <option value="Loose">Loose</option>
+                      <option value="Urgent">Urgent</option>
+                    </select>
+                  </label>
+                  <div class="tracker-summary-box">
+                    <span class="field-label">Daily Summary</span>
+                    <strong id="stool-summary">No stool passage logged yet.</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div id="menstrual-panel" class="health-panel field-span-full menstrual-panel hidden">
+                <div class="health-panel-heading">
+                  <p class="eyebrow">Cycle Log</p>
+                  <h4>Mark the day on your cycle calendar</h4>
+                </div>
+                <div id="cycle-tracker" class="cycle-tracker" aria-label="Menstrual day marker">
+                  <button class="cycle-step" type="button" data-cycle-value="">No cycle note</button>
+                  <button class="cycle-step" type="button" data-cycle-value="Period day">Period day</button>
+                  <button class="cycle-step" type="button" data-cycle-value="Spotting">Spotting</button>
+                  <button class="cycle-step" type="button" data-cycle-value="Cramp day">Cramp day</button>
+                  <button class="cycle-step" type="button" data-cycle-value="Ovulation signs">Ovulation signs</button>
+                </div>
+                <div class="two-column-grid menstrual-detail-grid">
+                  <label class="field">
+                    <span class="field-label">Cycle Day</span>
+                    <input id="cycle-day-input" type="number" min="1" max="60" placeholder="Optional" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Phase</span>
+                    <select id="period-phase-input">
+                      <option value="">Select phase</option>
+                      <option value="Menstrual">Menstrual</option>
+                      <option value="Follicular">Follicular</option>
+                      <option value="Ovulation">Ovulation</option>
+                      <option value="Luteal">Luteal</option>
+                    </select>
+                  </label>
+                </div>
+                <p id="menstrual-summary" class="helper-text helper-highlight">Pick a cycle marker for the selected date if you want to track it.</p>
+              </div>
+
+              <button id="health-submit" class="button-primary field-span-full" type="submit">Save Health Log</button>
+              <p id="health-status" class="form-status field-span-full" aria-live="polite"></p>
+            </form>
+          </article>
+
+          <article class="card dashboard-card">
+            <div class="card-heading">
+              <p class="eyebrow">Quick Entry</p>
+              <h3>Parse Text Log</h3>
+            </div>
+            <form id="text-log-form" class="form-stack">
+              <label class="field">
+                <span class="field-label">Message</span>
+                <textarea id="text-log-input" rows="5" placeholder="I drank 2L water, slept 7.5 hours, and worked out for 30 minutes."></textarea>
+              </label>
+              <button id="text-log-submit" class="button-primary" type="submit">Parse and Save</button>
+              <p id="text-log-status" class="form-status" aria-live="polite"></p>
+            </form>
+          </article>
+
+          <article class="card dashboard-card dashboard-card-wide">
+            <div class="card-heading">
+              <p class="eyebrow">Recent Activity</p>
+              <h3>Saved Health Logs</h3>
+            </div>
+            <div id="recent-logs" class="pill-list empty-state-list">
+              <p class="body-copy compact-copy">No logs yet. Add a manual log or send a message above.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

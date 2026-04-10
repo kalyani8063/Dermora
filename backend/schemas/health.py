@@ -7,6 +7,7 @@ class HealthLogRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     entry_date: str | None = None
+    sugar_free: bool | None = None
     water_intake: float | None = None
     activity: str = ""
     diet: str = ""
@@ -48,3 +49,4 @@ class HealthTextRequest(BaseModel):
 class HealthLogResponse(BaseModel):
     message: str
     log: dict
+

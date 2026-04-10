@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Profile | Dermora</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body data-page="profile">
+    <header class="site-header site-header-solid">
+      <div class="nav-shell">
+        <a href="/dashboard" class="nav-brand"><img src="/assets/images/logo.png" alt="Dermora logo" class="nav-logo" /><span class="nav-brand-text">Dermora</span></a>
+        <nav class="nav-actions" aria-label="Primary">
+          <a href="/dashboard" class="button-secondary">Dashboard</a>
+          <a href="/health-logs" class="button-secondary">Health Logs</a>
+          <button id="logout-button" class="button-primary" type="button">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="page-shell auth-main">
+      <section class="auth-page-layout register-layout">
+        <div class="auth-brand-column">
+          <div class="auth-copy-card">
+            <p class="eyebrow">Profile</p>
+            <h1 class="auth-hero-title">Update your Dermora account details</h1>
+            <p class="auth-hero-copy">
+              Keep your registration details current so your dashboard and reports stay accurate.
+            </p>
+            <div class="auth-feature-list">
+              <div class="auth-feature-item">
+                <strong id="user-name">Your account</strong>
+                <span id="user-meta">Load your profile to review saved details.</span>
+              </div>
+              <div class="auth-feature-item">
+                <strong>Editable registration details</strong>
+                <span>Update name, email, age, gender, and birthdate from one place.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="auth-form-column">
+          <article class="card auth-form-card register-card">
+            <div class="card-heading">
+              <p class="eyebrow">Personal Details</p>
+              <h2>Edit your profile</h2>
+              <p class="body-copy compact-copy">These fields come from your account registration and can be updated anytime.</p>
+            </div>
+
+            <form id="profile-form" class="form-grid two-column-grid">
+              <label class="field field-span-full">
+                <span class="field-label">Full Name</span>
+                <input id="profile-name" type="text" placeholder="Your full name" required />
+              </label>
+
+              <label class="field field-span-full">
+                <span class="field-label">Email</span>
+                <input id="profile-email" type="email" placeholder="you@example.com" required />
+              </label>
+
+              <label class="field">
+                <span class="field-label">Age</span>
+                <input id="profile-age" type="number" min="1" placeholder="24" />
+              </label>
+
+              <label class="field">
+                <span class="field-label">Gender</span>
+                <select id="profile-gender">
+                  <option value="">Select gender</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Others">Others</option>
+                </select>
+              </label>
+
+              <label class="field field-span-full">
+                <span class="field-label">Birthdate</span>
+                <input id="profile-birthdate" type="date" />
+              </label>
+
+              <button id="profile-submit" class="button-primary field-span-full" type="submit">Save Changes</button>
+              <p id="profile-status" class="form-status field-span-full" aria-live="polite"></p>
+            </form>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

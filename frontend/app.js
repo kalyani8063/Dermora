@@ -50,6 +50,7 @@ const appState = {
   logs: [],
   voiceGuideAvailable: false,
   voiceGuideMessage: "",
+  latestReport: null,
   onboardingStep: 0,
   onboardingAnswers: {
     acne_type: [],
@@ -156,9 +157,71 @@ async function fetchCurrentUser() {
   }
 }
 
-async function fetchHealthLogs() {
-  const payload = await apiFetch("/health-logs-data");
+async function fetchHealthLogs(limit = 12) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  const payload = await apiFetch(`/health-logs-data?${query.toString()}`);
   return payload.logs || [];
+}
+
+function setReportButtonState(button, statusNode, report) {
+  appState.latestReport = report || null;
+  if (!button) {
+    return;
+  }
+
+  const isReady = Boolean(report?.report_id);
+  button.disabled = !isReady;
+  button.setAttribute("aria-disabled", String(!isReady));
+  button.title = isReady ? "Download the latest generated report." : "Run an analysis to generate a downloadable report.";
+  button.dataset.reportId = isReady ? report.report_id : "";
+  button.dataset.filename = isReady ? report.filename || "Dermora_Report.pdf" : "";
+
+  if (statusNode) {
+    setMessage(statusNode, isReady ? `Latest report ready: ${report.filename}` : "Run an analysis to generate a downloadable clinical-reference report.", isReady ? "success" : "");
+  }
+}
+
+async function downloadReportArtifact(button, statusNode) {
+  const reportId = appState.latestReport?.report_id;
+  if (!reportId) {
+    setMessage(statusNode, "Run an analysis before downloading a report.", "error");
+    return;
+  }
+
+  setButtonLoading(button, true, "Preparing...");
+  setMessage(statusNode, "Preparing your report download...", "info");
+
+  try {
+    const response = await fetch(`/reports/${encodeURIComponent(reportId)}`, {
+      headers: appState.token ? { Authorization: `Bearer ${appState.token}` } : {},
+    });
+
+    if (!response.ok) {
+      let detail = "Could not download the report.";
+      try {
+        const payload = await response.json();
+        detail = payload.detail || detail;
+      } catch (error) {
+        detail = detail;
+      }
+      throw new Error(detail);
+    }
+
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = downloadUrl;
+    anchor.download = appState.latestReport?.filename || button.dataset.filename || "Dermora_Report.pdf";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+    setMessage(statusNode, "Report downloaded successfully.", "success");
+  } catch (error) {
+    setMessage(statusNode, error.message || "Could not download the report.", "error");
+  } finally {
+    setButtonLoading(button, false, "Preparing...");
+  }
 }
 
 function startTaglineRotation() {
@@ -777,6 +840,296 @@ function formatEntryDate(value) {
   });
 }
 
+const sugarFreePositivePatterns = [
+  /sugar[ -]?free/i,
+  /no added sugar/i,
+  /no sugar/i,
+  /without sugar/i,
+  /zero sugar/i,
+  /cut out sugar/i,
+  /skipped (?:dessert|sweets)/i,
+];
+
+const sugarFreeNegativePatterns = [
+  /high sugar/i,
+  /had sugar/i,
+  /sugary/i,
+  /\bdessert\b/i,
+  /\bsweets?\b/i,
+  /\bcandy\b/i,
+  /\bcake\b/i,
+  /\bice cream\b/i,
+  /\bsoda\b/i,
+  /\bchocolate\b/i,
+];
+
+function getLogEntryDate(log) {
+  return log?.entry_date || (log?.date ? String(log.date).slice(0, 10) : "");
+}
+
+function parseDateKey(value) {
+  if (!value) {
+    return null;
+  }
+
+  const [year, month, day] = String(value).split("-").map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return new Date(year, month - 1, day);
+}
+
+function getDayDifference(later, earlier) {
+  if (!later || !earlier) {
+    return null;
+  }
+
+  const laterUtc = Date.UTC(later.getFullYear(), later.getMonth(), later.getDate());
+  const earlierUtc = Date.UTC(earlier.getFullYear(), earlier.getMonth(), earlier.getDate());
+  return Math.round((laterUtc - earlierUtc) / 86400000);
+}
+
+function formatDayBadge(value) {
+  const parsed = parseDateKey(value);
+  const todayValue = getTodayInputValue();
+  if (!parsed) {
+    return value;
+  }
+  if (value === todayValue) {
+    return "Today";
+  }
+
+  const today = parseDateKey(todayValue);
+  if (today && getDayDifference(today, parsed) === 1) {
+    return "Yesterday";
+  }
+
+  return parsed.toLocaleDateString(undefined, { weekday: "short" });
+}
+
+function getSugarFreeState(log) {
+  if (typeof log?.sugar_free === "boolean") {
+    return log.sugar_free;
+  }
+
+  const sourceBits = [
+    log?.diet,
+    log?.notes,
+    log?.source_text,
+    log?.additional_context?.source_text,
+    Array.isArray(log?.tags) ? log.tags.join(" ") : "",
+  ].filter(Boolean);
+  const combinedText = sourceBits.join(" | ");
+
+  if (!combinedText) {
+    return null;
+  }
+
+  if (sugarFreeNegativePatterns.some((pattern) => pattern.test(combinedText))) {
+    return false;
+  }
+  if (sugarFreePositivePatterns.some((pattern) => pattern.test(combinedText))) {
+    return true;
+  }
+  return null;
+}
+
+function buildSugarFreeStreak(logs = []) {
+  const statesByDate = new Map();
+  const logsByRecency = [...logs].sort((left, right) => {
+    const leftTime = left?.date ? new Date(left.date).getTime() : 0;
+    const rightTime = right?.date ? new Date(right.date).getTime() : 0;
+    return rightTime - leftTime;
+  });
+
+  logsByRecency.forEach((log) => {
+    const dateKey = getLogEntryDate(log);
+    if (!dateKey) {
+      return;
+    }
+
+    const nextState = getSugarFreeState(log);
+    const hasDate = statesByDate.has(dateKey);
+    const currentState = statesByDate.get(dateKey);
+
+    if (!hasDate) {
+      statesByDate.set(dateKey, nextState);
+      return;
+    }
+
+    if (currentState == null && typeof nextState === "boolean") {
+      statesByDate.set(dateKey, nextState);
+    }
+  });
+
+  const orderedDays = Array.from(statesByDate.entries()).sort((left, right) => left[0].localeCompare(right[0]));
+  const latestDay = orderedDays[orderedDays.length - 1] || ["", null];
+  const latestDate = latestDay[0] || "";
+  const latestState = latestDay[1] ?? null;
+
+  let bestStreak = 0;
+  let runningStreak = 0;
+  let previousDate = null;
+
+  orderedDays.forEach(([dateKey, state]) => {
+    const currentDate = parseDateKey(dateKey);
+    const isConsecutive = previousDate && currentDate && getDayDifference(currentDate, previousDate) === 1;
+
+    if (state === true) {
+      runningStreak = isConsecutive && runningStreak > 0 ? runningStreak + 1 : 1;
+      bestStreak = Math.max(bestStreak, runningStreak);
+    } else {
+      runningStreak = 0;
+    }
+
+    previousDate = currentDate;
+  });
+
+  let currentStreak = 0;
+  if (latestState === true) {
+    currentStreak = 1;
+    let cursorDate = parseDateKey(latestDate);
+
+    for (let index = orderedDays.length - 2; index >= 0; index -= 1) {
+      const [dateKey, state] = orderedDays[index];
+      const candidateDate = parseDateKey(dateKey);
+      if (state !== true || !candidateDate || !cursorDate || getDayDifference(cursorDate, candidateDate) !== 1) {
+        break;
+      }
+      currentStreak += 1;
+      cursorDate = candidateDate;
+    }
+  }
+
+  const totalSugarFreeDays = orderedDays.filter(([, state]) => state === true).length;
+  const todayValue = getTodayInputValue();
+  const today = parseDateKey(todayValue);
+  const latestParsed = parseDateKey(latestDate);
+  const latestGap = today && latestParsed ? getDayDifference(today, latestParsed) : null;
+  const isFresh = latestState === true && latestDate === todayValue;
+  const needsTodayCheckIn = latestState === true && latestGap === 1;
+  const isStale = latestState === true && latestGap != null && latestGap > 1;
+
+  const recentWeek = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date();
+    day.setHours(0, 0, 0, 0);
+    day.setDate(day.getDate() - (6 - index));
+    const dateKey = [
+      day.getFullYear(),
+      String(day.getMonth() + 1).padStart(2, "0"),
+      String(day.getDate()).padStart(2, "0"),
+    ].join("-");
+    return {
+      dateKey,
+      label: formatDayBadge(dateKey),
+      dayNumber: String(day.getDate()).padStart(2, "0"),
+      state: statesByDate.has(dateKey) ? statesByDate.get(dateKey) : null,
+      isToday: dateKey === todayValue,
+    };
+  });
+
+  return {
+    currentStreak,
+    bestStreak,
+    totalSugarFreeDays,
+    latestDate,
+    latestState,
+    needsTodayCheckIn,
+    isFresh,
+    isStale,
+    recentWeek,
+    loggedDays: orderedDays.length,
+  };
+}
+
+function buildSugarFreeNarrative(summary) {
+  if (!summary.loggedDays) {
+    return {
+      kicker: "Glow chain waiting",
+      story: "Log a sugar-free day to start a fresh streak on your dashboard.",
+    };
+  }
+
+  if (summary.currentStreak === 0) {
+    if (summary.latestState === false) {
+      return {
+        kicker: "Fresh reset available",
+        story: "Your latest log included sugar. The next sugar-free day starts a brand-new streak.",
+      };
+    }
+
+    return {
+      kicker: "No active run yet",
+      story: "You have check-ins, but no current sugar-free chain. One intentional day lights it up.",
+    };
+  }
+
+  if (summary.isFresh) {
+    return {
+      kicker: summary.currentStreak >= 7 ? "Glow chain strong" : "Streak is glowing",
+      story: `You locked in ${summary.currentStreak} ${summary.currentStreak === 1 ? "day" : "days"} in a row with today's check-in.`,
+    };
+  }
+
+  if (summary.needsTodayCheckIn) {
+    return {
+      kicker: "Carry it forward",
+      story: `${summary.currentStreak} ${summary.currentStreak === 1 ? "day" : "days"} are confirmed through ${formatEntryDate(summary.latestDate)}. Log today to keep the lights on.`,
+    };
+  }
+
+  if (summary.isStale) {
+    return {
+      kicker: "Recent streak on pause",
+      story: `Your last sugar-free run reached ${summary.currentStreak} ${summary.currentStreak === 1 ? "day" : "days"}. Another check-in restarts the glow.`,
+    };
+  }
+
+  return {
+    kicker: "Rhythm in progress",
+    story: `${summary.currentStreak} ${summary.currentStreak === 1 ? "day" : "days"} are currently recorded in a row.`,
+  };
+}
+
+function renderSugarFreeStreak() {
+  const streakValue = byId("sugar-streak-value");
+  const streakStory = byId("sugar-streak-story");
+  const streakWidget = byId("sugar-streak-widget");
+  const keepButton = byId("sugar-streak-keep");
+  const breakButton = byId("sugar-streak-break");
+
+  if (!streakValue || !streakStory || !streakWidget || !keepButton || !breakButton) {
+    return null;
+  }
+
+  const summary = buildSugarFreeStreak(appState.logs);
+  const displayStreak = summary.isStale ? 0 : summary.currentStreak;
+  const todayState = summary.recentWeek.find((day) => day.isToday)?.state ?? null;
+
+  streakValue.textContent = `${displayStreak} ${displayStreak === 1 ? "day" : "days"}`;
+
+  if (!summary.loggedDays) {
+    streakStory.textContent = "Tap the streak to log today as sugar-free.";
+  } else if (todayState === true) {
+    streakStory.textContent = "Logged sugar-free today. Your streak is alive.";
+  } else if (todayState === false) {
+    streakStory.textContent = "Sugar logged today. The streak is broken for now.";
+  } else if (displayStreak > 0) {
+    streakStory.textContent = `Tap the streak to continue your ${displayStreak}-day run today.`;
+  } else {
+    streakStory.textContent = "Tap the streak to start a new sugar-free run.";
+  }
+
+  streakWidget.dataset.streakState = todayState === false ? "broken" : displayStreak > 0 ? "active" : "idle";
+  keepButton.classList.toggle("is-active", todayState === true);
+  keepButton.setAttribute("aria-pressed", String(todayState === true));
+  breakButton.classList.toggle("is-active", todayState === false);
+  breakButton.setAttribute("aria-pressed", String(todayState === false));
+
+  return summary;
+}
+
 function renderRecentLogs(target) {
   if (!target) {
     return;
@@ -800,7 +1153,7 @@ function renderRecentLogs(target) {
 
     const time = document.createElement("span");
     time.className = "log-time";
-    time.textContent = formatEntryDate(log.entry_date || (log.date ? String(log.date).slice(0, 10) : ""));
+    time.textContent = formatEntryDate(getLogEntryDate(log));
 
     const savedAt = document.createElement("span");
     savedAt.className = "log-date-pill";
@@ -818,6 +1171,13 @@ function renderRecentLogs(target) {
     metrics.className = "log-metrics";
 
     const metricLabels = [];
+    const sugarFreeState = getSugarFreeState(log);
+
+    if (sugarFreeState === true) {
+      metricLabels.push({ text: "Sugar-free", tone: "success" });
+    } else if (sugarFreeState === false) {
+      metricLabels.push({ text: "Sugar logged", tone: "warning" });
+    }
     if (log.water_intake != null) {
       metricLabels.push({ text: `${log.water_intake}L water` });
     }
@@ -842,7 +1202,11 @@ function renderRecentLogs(target) {
 
     metricLabels.forEach((metric) => {
       const chip = document.createElement("span");
-      chip.className = metric.accent ? "log-metric log-metric-accent" : "log-metric";
+      chip.className = [
+        "log-metric",
+        metric.accent ? "log-metric-accent" : "",
+        metric.tone ? `log-metric-${metric.tone}` : "",
+      ].filter(Boolean).join(" ");
       chip.textContent = metric.text;
       metrics.appendChild(chip);
     });
@@ -917,6 +1281,8 @@ function bindHealthLogForms() {
   const cycleDayInput = byId("cycle-day-input");
   const periodPhaseInput = byId("period-phase-input");
   const cycleButtons = Array.from(document.querySelectorAll("[data-cycle-value]"));
+  const sugarSummary = byId("sugar-free-summary");
+  const sugarButtons = Array.from(document.querySelectorAll("[data-sugar-choice]"));
 
   const litersPerGlass = 0.25;
   const hydrationMessages = [
@@ -929,6 +1295,7 @@ function bindHealthLogForms() {
 
   let stoolCount = 0;
   let cycleValue = "";
+  let sugarFreeState = null;
 
   function ensureEntryDate() {
     if (entryDateInput && !entryDateInput.value) {
@@ -965,6 +1332,34 @@ function bindHealthLogForms() {
         waterCaption.textContent = hydrationMessages[4];
       }
     }
+  }
+
+  function updateSugarFreeSummary() {
+    if (!sugarSummary) {
+      return;
+    }
+
+    const selectedDate = formatEntryDate(entryDateInput?.value || getTodayInputValue());
+    if (sugarFreeState === true) {
+      sugarSummary.textContent = `${selectedDate} is marked sugar-free. This will extend your homepage streak.`;
+      return;
+    }
+    if (sugarFreeState === false) {
+      sugarSummary.textContent = `${selectedDate} is marked as a sugar day. Your streak will reset for that date.`;
+      return;
+    }
+
+    sugarSummary.textContent = "Leave it blank if you are unsure. Mark it when you want the streak to update.";
+  }
+
+  function setSugarFreeState(nextState) {
+    sugarFreeState = nextState;
+    sugarButtons.forEach((button) => {
+      const isMatch = (button.dataset.sugarChoice === "yes" && sugarFreeState === true)
+        || (button.dataset.sugarChoice === "no" && sugarFreeState === false);
+      button.classList.toggle("is-active", isMatch);
+    });
+    updateSugarFreeSummary();
   }
 
   function updateStoolSummary() {
@@ -1028,6 +1423,7 @@ function bindHealthLogForms() {
     healthLogForm?.reset();
     ensureEntryDate();
     setWaterCount(0);
+    setSugarFreeState(null);
     setStoolCount(0);
     setCycleValue("");
     updateMenstrualSummary();
@@ -1038,6 +1434,13 @@ function bindHealthLogForms() {
       const nextCount = Number(button.dataset.waterGlass);
       const currentCount = Math.round((Number(waterInput?.value || 0) / litersPerGlass));
       setWaterCount(currentCount === nextCount ? nextCount - 1 : nextCount);
+    });
+  });
+
+  sugarButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextState = button.dataset.sugarChoice === "yes" ? true : false;
+      setSugarFreeState(sugarFreeState === nextState ? null : nextState);
     });
   });
 
@@ -1056,12 +1459,16 @@ function bindHealthLogForms() {
   });
 
   stoolFeelInput?.addEventListener("change", updateStoolSummary);
-  entryDateInput?.addEventListener("change", updateMenstrualSummary);
+  entryDateInput?.addEventListener("change", () => {
+    updateMenstrualSummary();
+    updateSugarFreeSummary();
+  });
   cycleDayInput?.addEventListener("input", updateMenstrualSummary);
   periodPhaseInput?.addEventListener("change", updateMenstrualSummary);
 
   ensureEntryDate();
   setWaterCount(0);
+  setSugarFreeState(null);
   setStoolCount(0);
   syncMenstrualVisibility();
   renderRecentLogs(recentLogs);
@@ -1073,6 +1480,7 @@ function bindHealthLogForms() {
 
     const payload = {
       entry_date: entryDateInput?.value || getTodayInputValue(),
+      sugar_free: sugarFreeState,
       water_intake: Number(waterInput?.value || 0) > 0 ? Number(waterInput.value) : null,
       activity: byId("activity-input").value,
       diet: byId("diet-input").value,
@@ -1391,6 +1799,11 @@ function maybeInitOnboardingQuiz() {
 function bindDashboardEvents() {
   const logoutButton = byId("logout-button");
   const voiceGuideButton = byId("voice-guide-button");
+  const downloadReportButton = byId("download-report-button");
+  const reportStatus = byId("report-status");
+  const sugarKeepButton = byId("sugar-streak-keep");
+  const sugarBreakButton = byId("sugar-streak-break");
+  const sugarStatus = byId("sugar-streak-status");
   const analyzeForm = byId("analyze-form");
   const imageInput = byId("image-input");
   const analyzeButton = byId("analyze-button");
@@ -1417,6 +1830,7 @@ function bindDashboardEvents() {
     byId("trend-status-value").textContent = data.trend.status;
     byId("prediction-value").textContent = data.prediction;
     byId("analysis-date-value").textContent = new Date(data.analysis_date).toLocaleString();
+    setReportButtonState(downloadReportButton, reportStatus, data.report || null);
 
     renderZones(zonesList, data.zones);
     renderList(insightsList, data.insights, "Insights will appear after analysis.");
@@ -1425,7 +1839,9 @@ function bindDashboardEvents() {
   }
 
   renderUserProfile();
+  renderSugarFreeStreak();
   updateVoiceGuideState(voiceGuideButton, false);
+  setReportButtonState(downloadReportButton, reportStatus, null);
   renderZones(zonesList);
   renderList(insightsList, [], "Insights will appear after analysis.");
   renderList(correlationsList, [], "Correlations will appear after more logs.");
@@ -1466,14 +1882,15 @@ function bindDashboardEvents() {
       const data = await apiFetch("/analyze", { method: "POST", body: formData });
       renderAnalysis(data);
 
+      const reportMessage = data.report?.report_id ? " Downloadable report is ready at the top." : "";
       if (hasDetectedInconvenience(data)) {
         const voiceMessage = buildVoiceGuideMessage(data);
         updateVoiceGuideState(voiceGuideButton, true, voiceMessage);
         speakGuide(voiceMessage);
-        setMessage(analyzeStatus, "Analysis complete. Voice guide activated because a concern was detected.", "success");
+        setMessage(analyzeStatus, `Analysis complete. Voice guide activated because a concern was detected.${reportMessage}`, "success");
       } else {
         updateVoiceGuideState(voiceGuideButton, false);
-        setMessage(analyzeStatus, "Analysis complete. No inconvenience detected, so voice guide stayed off.", "success");
+        setMessage(analyzeStatus, `Analysis complete. No inconvenience detected, so voice guide stayed off.${reportMessage}`, "success");
       }
     } catch (error) {
       setMessage(analyzeStatus, error.message || "Analysis failed.", "error");
@@ -1482,8 +1899,54 @@ function bindDashboardEvents() {
     }
   });
 
+  async function saveDashboardSugarCheckin(sugarFree) {
+    const activeButton = sugarFree ? sugarKeepButton : sugarBreakButton;
+    const inactiveButton = sugarFree ? sugarBreakButton : sugarKeepButton;
+    const loadingLabel = sugarFree ? "Keeping..." : "Saving...";
+
+    setButtonLoading(activeButton, true, loadingLabel);
+    if (inactiveButton) {
+      inactiveButton.disabled = true;
+    }
+    setMessage(sugarStatus, sugarFree ? "Keeping your streak going..." : "Logging today's sugar intake...", "info");
+
+    try {
+      const data = await apiFetch("/log-health", {
+        method: "POST",
+        body: JSON.stringify({
+          entry_date: getTodayInputValue(),
+          sugar_free: sugarFree,
+          source: "dashboard_quick_checkin",
+          notes: sugarFree ? "Dashboard sugar-free check-in" : "Dashboard sugar check-in",
+          tags: ["dashboard", "sugar-streak"],
+        }),
+      });
+
+      appState.logs.unshift(data.log);
+      appState.logs = appState.logs.slice(0, 120);
+      renderSugarFreeStreak();
+      setMessage(sugarStatus, sugarFree ? "Sugar-free today recorded. Streak continued." : "Sugar intake recorded. Streak broken for today.", "success");
+    } catch (error) {
+      setMessage(sugarStatus, error.message || "Could not save today's sugar status.", "error");
+    } finally {
+      setButtonLoading(activeButton, false, loadingLabel);
+      if (inactiveButton) {
+        inactiveButton.disabled = false;
+      }
+    }
+  }
+
   bindLogout(logoutButton);
   voiceGuideButton?.addEventListener("click", speakGuide);
+  downloadReportButton?.addEventListener("click", async () => {
+    await downloadReportArtifact(downloadReportButton, reportStatus);
+  });
+  sugarKeepButton?.addEventListener("click", async () => {
+    await saveDashboardSugarCheckin(true);
+  });
+  sugarBreakButton?.addEventListener("click", async () => {
+    await saveDashboardSugarCheckin(false);
+  });
 }
 
 async function initDashboardPage() {
@@ -1494,8 +1957,97 @@ async function initDashboardPage() {
   }
 
   appState.user = user;
+
+  try {
+    appState.logs = await fetchHealthLogs(120);
+  } catch (error) {
+    appState.logs = [];
+  }
+
   bindDashboardEvents();
   maybeInitOnboardingQuiz();
+}
+
+async function initProfilePage() {
+  const user = await fetchCurrentUser();
+  if (!user) {
+    redirectTo("/login");
+    return;
+  }
+
+  appState.user = user;
+  renderUserProfile();
+  bindLogout(byId("logout-button"));
+
+  const profileForm = byId("profile-form");
+  const profileStatus = byId("profile-status");
+  const profileSubmit = byId("profile-submit");
+  const nameInput = byId("profile-name");
+  const emailInput = byId("profile-email");
+  const ageInput = byId("profile-age");
+  const genderInput = byId("profile-gender");
+  const birthdateInput = byId("profile-birthdate");
+
+  if (!profileForm || !nameInput || !emailInput || !ageInput || !genderInput || !birthdateInput) {
+    return;
+  }
+
+  function fillProfileForm() {
+    nameInput.value = appState.user?.name || "";
+    emailInput.value = appState.user?.email || "";
+    ageInput.value = appState.user?.age ?? "";
+    genderInput.value = appState.user?.gender || "";
+    birthdateInput.value = appState.user?.birthdate || "";
+  }
+
+  function clearStatus() {
+    setMessage(profileStatus, "");
+  }
+
+  fillProfileForm();
+  nameInput.addEventListener("input", clearStatus);
+  emailInput.addEventListener("input", clearStatus);
+  ageInput.addEventListener("input", clearStatus);
+  genderInput.addEventListener("change", clearStatus);
+  birthdateInput.addEventListener("change", clearStatus);
+
+  profileForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    if (!nameInput.value.trim()) {
+      setMessage(profileStatus, "Please enter your full name.", "error");
+      return;
+    }
+    if (!isValidEmail(emailInput.value)) {
+      setMessage(profileStatus, "Please enter a valid email address.", "error");
+      return;
+    }
+
+    setButtonLoading(profileSubmit, true, "Saving...");
+    setMessage(profileStatus, "Saving profile changes...", "info");
+
+    try {
+      const payload = await apiFetch("/me", {
+        method: "PUT",
+        body: JSON.stringify({
+          name: nameInput.value.trim(),
+          email: normalizeEmail(emailInput.value),
+          age: ageInput.value ? Number(ageInput.value) : null,
+          gender: genderInput.value,
+          birthdate: birthdateInput.value || null,
+        }),
+      });
+
+      appState.user = payload.user;
+      renderUserProfile();
+      fillProfileForm();
+      setMessage(profileStatus, payload.message || "Profile updated.", "success");
+    } catch (error) {
+      setMessage(profileStatus, error.message || "Could not update profile.", "error");
+    } finally {
+      setButtonLoading(profileSubmit, false, "Saving...");
+    }
+  });
 }
 
 async function initHealthLogsPage() {
@@ -1510,7 +2062,7 @@ async function initHealthLogsPage() {
   bindLogout(byId("logout-button"));
 
   try {
-    appState.logs = await fetchHealthLogs();
+    appState.logs = await fetchHealthLogs(12);
   } catch (error) {
     appState.logs = [];
   }
@@ -1538,6 +2090,11 @@ async function bootstrap() {
 
   if (page === "dashboard") {
     await initDashboardPage();
+    return;
+  }
+
+  if (page === "profile") {
+    await initProfilePage();
     return;
   }
 

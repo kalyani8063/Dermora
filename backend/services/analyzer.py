@@ -1,5 +1,7 @@
-﻿from pathlib import Path
+from __future__ import annotations
+
 from datetime import datetime, timezone
+from pathlib import Path
 
 import cv2
 
@@ -7,13 +9,14 @@ from backend.schemas.response import (
     AcneDetails,
     AnalysisResponse,
     PigmentationDetails,
+    ReportArtifact,
     TrendDetails,
     ZoneDetails,
     ZoneSummary,
 )
 from backend.services.intelligence import generate_insights
 from backend.services.ml_model import analyze_image
-from backend.services.report import generate_report
+from backend.services.report import build_downloadable_report, generate_report
 from backend.services.workflow import send_to_n8n
 
 ZONE_NAMES = ("forehead", "left_cheek", "right_cheek", "nose", "chin")
@@ -48,7 +51,6 @@ def _box_severity(box: list[int]) -> str:
     width = max(1, box[2] - box[0])
     height = max(1, box[3] - box[1])
     area = width * height
-
     if area < 1800:
         return "Low"
     if area < 3000:
@@ -75,16 +77,7 @@ def draw_overlays(image, boxes):
         color = _severity_color(severity)
         x1, y1, x2, y2 = box
         cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(
-            canvas,
-            f"Acne {index} - {severity}",
-            (x1, max(24, y1 - 8)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            color,
-            1,
-            cv2.LINE_AA,
-        )
+        cv2.putText(canvas, f"Acne {index} - {severity}", (x1, max(24, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
 
     return canvas
 
@@ -92,7 +85,6 @@ def draw_overlays(image, boxes):
 def _build_zones(acne_count: int) -> ZoneDetails:
     base_counts = {}
     remaining = acne_count
-
     for zone in ZONE_NAMES:
         zone_count = int(acne_count * ZONE_WEIGHTS[zone])
         base_counts[zone] = zone_count
@@ -145,6 +137,7 @@ def process_skin_analysis(
     image_url: str,
     processed_image_path: Path,
     processed_image_url: str,
+    report_output_dir: Path,
     user_profile: dict,
     previous_analysis: dict | None,
     recent_logs: list[dict],
@@ -193,15 +186,22 @@ def process_skin_analysis(
         summary=report["summary"],
         insights=_dedupe(report["key_insights"] + intelligence["insights"]),
         recommendations=_dedupe(report["recommendations"] + intelligence["recommendations"]),
-        trend=TrendDetails(
-            previous_acne_count=previous_count,
-            change=intelligence["change"],
-            status=intelligence["trend_status"],
-        ),
+        trend=TrendDetails(previous_acne_count=previous_count, change=intelligence["change"], status=intelligence["trend_status"]),
         correlations=intelligence["correlations"],
         prediction=intelligence["prediction"],
         analysis_date=analysis_date,
     )
+
+    report_artifact = build_downloadable_report(
+        output_dir=report_output_dir,
+        analysis=response.model_dump(),
+        user_profile=user_profile,
+        recent_logs=recent_logs,
+        previous_analysis=previous_analysis,
+        original_image_path=image_path,
+        processed_image_path=processed_image_path,
+    )
+    response.report = ReportArtifact(report_id=report_artifact["report_id"], session_id=report_artifact["session_id"], filename=report_artifact["filename"])
 
     workflow_payload = {
         "analysis": response.model_dump(),
@@ -232,6 +232,6 @@ def process_skin_analysis(
         "recommendations": response.recommendations,
         "correlations": response.correlations,
         "prediction": response.prediction,
+        "report": report_artifact,
     }
-
     return response, analysis_document

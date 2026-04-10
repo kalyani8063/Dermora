@@ -12,6 +12,7 @@
         <a href="/dashboard" class="nav-brand"><img src="/assets/images/logo.png" alt="Dermora logo" class="nav-logo" /><span class="nav-brand-text">Dermora</span></a>
         <nav class="nav-actions" aria-label="Primary">
           <a href="/dashboard" class="button-secondary">Dashboard</a>
+          <a href="/profile" class="button-secondary">Profile</a>
           <button id="logout-button" class="button-primary" type="button">Logout</button>
         </nav>
       </div>
@@ -88,6 +89,18 @@
                 <span class="field-label">Diet</span>
                 <input id="diet-input" type="text" placeholder="Meals, sugar, dairy, protein..." />
               </label>
+
+              <div class="health-panel field-span-full sugar-free-panel-shell">
+                <div class="health-panel-heading">
+                  <p class="eyebrow">Sugar-Free Signal</p>
+                  <h4>Mark how the day went</h4>
+                </div>
+                <div id="sugar-free-toggle" class="sugar-free-toggle" aria-label="Sugar-free day status">
+                  <button class="sugar-choice" type="button" data-sugar-choice="yes">Sugar-free day</button>
+                  <button class="sugar-choice" type="button" data-sugar-choice="no">Had sugar</button>
+                </div>
+                <p id="sugar-free-summary" class="helper-text helper-highlight">Leave it blank if you are unsure. Mark it when you want the streak to update.</p>
+              </div>
 
               <div class="health-panel field-span-full stool-panel-shell">
                 <div class="health-panel-heading">

@@ -9,6 +9,7 @@ from backend.db import get_collections
 
 KNOWN_HEALTH_PAYLOAD_FIELDS = {
     "entry_date",
+    "sugar_free",
     "water_intake",
     "activity",
     "diet",
@@ -84,6 +85,20 @@ def _to_int_or_none(value):
         return None
 
 
+def _to_bool_or_none(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+
+    normalized = _clean_text(value).lower()
+    if normalized in {"true", "yes", "1"}:
+        return True
+    if normalized in {"false", "no", "0"}:
+        return False
+    return None
+
+
 def create_user(user_document: dict):
     collections = get_collections()
     collections["users"].insert_one(user_document)
@@ -136,6 +151,11 @@ def get_last_analysis(user_id: str):
     return None
 
 
+def get_analysis_by_report_id(user_id: str, report_id: str):
+    collections = get_collections()
+    return _clean(collections["analyses"].find_one({"user_id": user_id, "report.report_id": report_id}))
+
+
 def save_health_log(log_document: dict):
     collections = get_collections()
     collections["health_logs"].insert_one(log_document)
@@ -177,6 +197,7 @@ def build_health_log_document(user_id: str, payload: dict):
         "entry_date": _clean_text(payload.get("entry_date"), now_iso[:10]) or now_iso[:10],
 
         # Backward-compatible fields used by existing intelligence + UI
+        "sugar_free": _to_bool_or_none(payload.get("sugar_free")),
         "water_intake": _to_float_or_none(payload.get("water_intake")),
         "activity": _clean_text(payload.get("activity")),
         "diet": _clean_text(payload.get("diet")),

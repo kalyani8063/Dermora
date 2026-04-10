@@ -11,6 +11,8 @@
       <div class="nav-shell">
         <a href="/dashboard" class="nav-brand"><img src="/assets/images/logo.png" alt="Dermora logo" class="nav-logo" /><span class="nav-brand-text">Dermora</span></a>
         <nav class="nav-actions" aria-label="Primary">
+          <button id="download-report-button" class="button-secondary" type="button" disabled aria-disabled="true" title="Run an analysis to generate a downloadable report.">Download Report</button>
+          <a href="/profile" class="button-secondary">Profile</a>
           <a href="/health-logs" class="button-secondary">Health Logs</a>
           <button id="voice-guide-button" class="button-secondary" type="button" disabled aria-disabled="true" title="Voice guide activates after a scan when a concern is detected.">Voice Guide</button>
           <button id="logout-button" class="button-primary" type="button">Logout</button>
@@ -50,7 +52,23 @@
               <p class="eyebrow">Multi-Modal Health Intelligence</p>
               <h1 class="dashboard-title">Welcome back, <span id="user-name">User</span></h1>
               <p id="user-meta" class="body-copy compact-copy"></p>
+              <p id="report-status" class="form-status">Run an analysis to generate a downloadable clinical-reference report.</p>
             </div>
+            <aside id="sugar-streak-widget" class="mini-streak-widget" aria-label="Sugar-free streak">
+              <button id="sugar-streak-keep" class="mini-streak-badge" type="button" title="Log today as sugar-free and keep the streak going.">
+                <span class="mini-streak-symbol" aria-hidden="true"></span>
+                <span class="mini-streak-copy">
+                  <span class="mini-streak-label">Sugar-free streak</span>
+                  <strong id="sugar-streak-value">0 days</strong>
+                </span>
+              </button>
+              <p id="sugar-streak-story" class="helper-text mini-streak-story">Tap the streak to log today as sugar-free.</p>
+              <div class="mini-streak-actions">
+                <button id="sugar-streak-break" class="text-button mini-streak-break" type="button">Had sugar</button>
+                <a href="/health-logs" class="text-button mini-streak-journal">Open journal</a>
+              </div>
+              <p id="sugar-streak-status" class="form-status mini-streak-status" aria-live="polite"></p>
+            </aside>
           </div>
         </div>
 

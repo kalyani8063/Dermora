@@ -2,7 +2,7 @@ from pathlib import Path
 import shutil
 import uuid
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +16,7 @@ from backend.schemas.auth import (
     OtpRequestResponse,
     OtpVerifyRequest,
     PasswordResetConfirmRequest,
+    ProfileUpdateRequest,
     RegisterOtpSendRequest,
     RegisterRequest,
 )
@@ -36,6 +37,7 @@ from backend.services.otp_service import clear_otp, ensure_verified, request_otp
 from backend.services.storage import (
     build_health_log_document,
     create_user,
+    get_analysis_by_report_id,
     get_last_analysis,
     get_recent_logs,
     get_user_by_email,
@@ -49,8 +51,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 PROCESSED_DIR = Path(__file__).resolve().parent / "processed"
+REPORT_DIR = Path(__file__).resolve().parent / "reports"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(
     title="Dermora Skin Analysis API",
@@ -103,6 +107,11 @@ async def serve_dashboard_page() -> FileResponse:
 @app.get("/health-logs", include_in_schema=False)
 async def serve_health_logs_page() -> FileResponse:
     return serve_page("health-logs.html")
+
+
+@app.get("/profile", include_in_schema=False)
+async def serve_profile_page() -> FileResponse:
+    return serve_page("profile.html")
 
 
 @app.get("/health/db", response_model=dict)
@@ -219,6 +228,29 @@ def me(current_user=Depends(get_current_user)):
     return {"user": to_public_user(current_user).model_dump()}
 
 
+@app.put("/me", response_model=dict)
+def update_me(payload: ProfileUpdateRequest, current_user=Depends(get_current_user)):
+    normalized_email = normalize_email(payload.email)
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Please enter your full name.")
+
+    existing_user = get_user_by_email(normalized_email)
+    if existing_user and existing_user.get("user_id") != current_user["user_id"]:
+        raise HTTPException(status_code=400, detail="Another account already uses that email.")
+
+    updated_user = update_user_fields(
+        current_user["user_id"],
+        {
+            "email": normalized_email,
+            "name": payload.name.strip(),
+            "age": payload.age,
+            "gender": payload.gender,
+            "birthdate": payload.birthdate,
+        },
+    )
+    return {"message": "Profile updated successfully.", "user": to_public_user(updated_user).model_dump()}
+
+
 @app.post("/onboarding", response_model=dict)
 def complete_onboarding(payload: OnboardingRequest, current_user=Depends(get_current_user)):
     onboarding_data = {
@@ -253,8 +285,11 @@ def complete_onboarding(payload: OnboardingRequest, current_user=Depends(get_cur
 
 
 @app.get("/health-logs-data", response_model=dict)
-def health_logs_data(current_user=Depends(get_current_user)):
-    return {"logs": get_recent_logs(current_user["user_id"], limit=12)}
+def health_logs_data(
+    limit: int = Query(default=12, ge=1, le=180),
+    current_user=Depends(get_current_user),
+):
+    return {"logs": get_recent_logs(current_user["user_id"], limit=limit)}
 
 
 @app.post("/log-health", response_model=HealthLogResponse)
@@ -262,6 +297,22 @@ def log_health(payload: HealthLogRequest, current_user=Depends(get_current_user)
     log_document = build_health_log_document(current_user["user_id"], payload.model_dump())
     saved_log = save_health_log(log_document)
     return HealthLogResponse(message="Health log stored.", log=saved_log)
+
+
+@app.get("/reports/{report_id}")
+def download_report(report_id: str, current_user=Depends(get_current_user)) -> FileResponse:
+    analysis = get_analysis_by_report_id(current_user["user_id"], report_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Report not found.")
+
+    report = analysis.get("report") or {}
+    report_path_value = report.get("path")
+    report_path = Path(report_path_value) if report_path_value else Path()
+    if not report_path_value or not report_path.is_file():
+        raise HTTPException(status_code=404, detail="Report file is unavailable.")
+
+    filename = report.get("filename") or "Dermora_Report.pdf"
+    return FileResponse(report_path, media_type="application/pdf", filename=filename)
 
 
 @app.post("/log-text", response_model=HealthLogResponse)
@@ -297,6 +348,7 @@ async def analyze(file: UploadFile = File(...), current_user=Depends(get_current
         image_url=image_url,
         processed_image_path=processed_destination,
         processed_image_url=processed_image_url,
+        report_output_dir=REPORT_DIR,
         user_profile=current_user,
         previous_analysis=previous_analysis,
         recent_logs=recent_logs,

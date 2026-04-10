@@ -46,6 +46,14 @@ class RegisterRequest(BaseModel):
     menstrual_health: dict = Field(default_factory=dict)
 
 
+class ProfileUpdateRequest(BaseModel):
+    email: str
+    name: str
+    age: int | None = None
+    gender: str = ""
+    birthdate: str | None = None
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str

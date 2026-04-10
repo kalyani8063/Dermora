@@ -1,4 +1,4 @@
-﻿from pydantic import BaseModel
+from pydantic import BaseModel
 
 
 class ZoneSummary(BaseModel):
@@ -31,6 +31,12 @@ class TrendDetails(BaseModel):
     status: str
 
 
+class ReportArtifact(BaseModel):
+    report_id: str
+    session_id: str
+    filename: str
+
+
 class AnalysisResponse(BaseModel):
     image_url: str
     processed_image_url: str
@@ -46,3 +52,4 @@ class AnalysisResponse(BaseModel):
     correlations: list[str]
     prediction: str
     analysis_date: str
+    report: ReportArtifact | None = None

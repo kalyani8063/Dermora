@@ -149,6 +149,8 @@ backend/.ultralytics/
 backend/processed/
 backend/reports/
 backend/uploads/
+backend/models/*.pt
+!backend/models/README.md
 
 # Spyder project settings
 .spyderproject

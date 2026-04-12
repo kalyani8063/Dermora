@@ -51,6 +51,9 @@ const appState = {
   voiceGuideAvailable: false,
   voiceGuideMessage: "",
   latestReport: null,
+  analysisResults: [],
+  activeAnalysisIndex: -1,
+  analysisViewMode: "all",
   onboardingStep: 0,
   onboardingAnswers: {
     acne_type: [],
@@ -1532,19 +1535,21 @@ function bindHealthLogForms() {
   });
 }
 
-function showPreview(file) {
-  const previewWrapper = byId("preview-wrapper");
-  const previewImage = byId("preview-image");
-  if (!previewWrapper || !previewImage) {
-    return;
+function createBatchItemId(prefix = "item") {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function isAcceptedImageFile(file) {
+  if (!file) {
+    return false;
   }
 
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    previewImage.src = event.target.result;
-    previewWrapper.classList.remove("hidden");
-  };
-  reader.readAsDataURL(file);
+  if (typeof file.type === "string" && file.type.startsWith("image/")) {
+    return true;
+  }
+
+  const lowerName = String(file.name || "").toLowerCase();
+  return [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"].some((extension) => lowerName.endsWith(extension));
 }
 
 function getMostAffectedZone(zones = {}) {
@@ -1563,18 +1568,11 @@ function getMostAffectedZone(zones = {}) {
 }
 
 function hasDetectedInconvenience(data) {
-  return ["Moderate", "High"].includes(data.acne.severity)
-    || data.acne.count >= 2
-    || data.trend.change > 0
-    || data.score < 90;
+  return false;
 }
 
 function buildVoiceGuideMessage(data) {
-  const topZone = getMostAffectedZone(data.zones);
-  const recommendedActions = (data.recommendations || []).slice(0, 2).join(" Then ");
-  const actionLine = recommendedActions || "Focus on a gentle routine, hydration, and consistent skin monitoring.";
-
-  return `I detected some inconvenience after your photo scan. Your skin analysis shows ${data.acne.count} active spots with ${data.acne.severity.toLowerCase()} severity, mainly around ${topZone}. ${actionLine}`;
+  return "";
 }
 
 function updateVoiceGuideState(button, enabled, message = "") {
@@ -1809,95 +1807,1027 @@ function bindDashboardEvents() {
   const analyzeButton = byId("analyze-button");
   const analyzeStatus = byId("analyze-status");
   const uploadCaption = byId("upload-caption");
-  const zonesList = byId("zones-list");
-  const insightsList = byId("insights-list");
-  const correlationsList = byId("correlations-list");
-  const recommendationsList = byId("recommendations-list");
+  const cameraStartButton = byId("camera-start-button");
+  const cameraCaptureButton = byId("camera-capture-button");
+  const cameraStopButton = byId("camera-stop-button");
+  const cameraPanel = byId("camera-panel");
+  const cameraPreview = byId("camera-preview");
+  const cameraCanvas = byId("camera-canvas");
+  const selectionList = byId("selection-list");
+  const clearSelectionButton = byId("clear-selection-button");
+  const analysisGallery = byId("analysis-gallery");
+  const analysisBatchStatus = byId("analysis-batch-status");
+  const analysisViewSwitcher = byId("analysis-view-switcher");
+  const imageCompareGrid = byId("image-compare-grid");
+  const originalImage = byId("original-image");
+  const detectionCanvas = byId("detection-canvas");
+  const overlayViewLabel = byId("overlay-view-label");
+  const defaultUploadCaption = "Use even lighting and keep your face centered. You can add photos from your gallery or camera.";
+  let selectedImages = [];
+  let cameraStream = null;
+  let captureCount = 0;
+  const analysisViewLabels = {
+    all: "Everything",
+    regions: "Region Detected",
+    "acne-type": "Acne Type",
+    mesh: "Facial Mesh",
+    pigmentation: "Hyperpigmentation Zones",
+  };
+  const faceZoneStyles = {
+    forehead: { fill: "rgba(56, 189, 248, 0.18)", stroke: "#38bdf8" },
+    left_cheek: { fill: "rgba(34, 197, 94, 0.18)", stroke: "#22c55e" },
+    right_cheek: { fill: "rgba(250, 204, 21, 0.18)", stroke: "#facc15" },
+    nose: { fill: "rgba(244, 114, 182, 0.18)", stroke: "#f472b6" },
+    chin: { fill: "rgba(168, 85, 247, 0.18)", stroke: "#a855f7" },
+  };
+  const faceZoneLabelGroups = [
+    { label: "Forehead", zoneNames: ["forehead"], offsetX: 0, offsetY: -14 },
+    { label: "Cheek", zoneNames: ["left_cheek"], offsetX: -18, offsetY: -4 },
+    { label: "Cheek", zoneNames: ["right_cheek"], offsetX: 18, offsetY: -4 },
+    { label: "Nose", zoneNames: ["nose"], offsetX: 0, offsetY: 8 },
+    { label: "Chin/Jawline", zoneNames: ["chin"], offsetX: 0, offsetY: 16 },
+  ];
 
-  function renderAnalysis(data) {
-    byId("result-image").src = data.image_url;
-    byId("processed-image").src = data.processed_image_url;
-    byId("score-value").textContent = data.score;
-    byId("summary-value").textContent = data.summary;
-    byId("confidence-value").textContent = `${data.confidence}%`;
-    byId("acne-count-value").textContent = data.acne.count;
-    byId("severity-value").textContent = data.acne.severity;
-    byId("pigmentation-coverage-value").textContent = `${data.pigmentation.coverage}% ${data.pigmentation.intensity}`;
-    byId("boxes-count-value").textContent = data.acne.boxes.length;
-    byId("previous-acne-count-value").textContent = data.trend.previous_acne_count;
-    byId("current-acne-count-value").textContent = data.acne.count;
-    byId("trend-change-value").textContent = formatTrendChange(data.trend.change);
-    byId("trend-status-value").textContent = data.trend.status;
-    byId("prediction-value").textContent = data.prediction;
-    byId("analysis-date-value").textContent = new Date(data.analysis_date).toLocaleString();
-    setReportButtonState(downloadReportButton, reportStatus, data.report || null);
+  function getAnalysisViewLabel(viewMode) {
+    return analysisViewLabels[viewMode] || analysisViewLabels.all;
+  }
 
-    renderZones(zonesList, data.zones);
-    renderList(insightsList, data.insights, "Insights will appear after analysis.");
-    renderList(correlationsList, data.correlations, "Correlations will appear after more logs.");
-    renderList(recommendationsList, data.recommendations, "Recommendations will appear after analysis.");
+  function updateAnalysisViewButtons() {
+    if (overlayViewLabel) {
+      overlayViewLabel.textContent = getAnalysisViewLabel(appState.analysisViewMode);
+    }
+
+    analysisViewSwitcher?.querySelectorAll("[data-view-mode]").forEach((button) => {
+      const isActive = button.dataset.viewMode === appState.analysisViewMode;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+  }
+
+  function clearAnalysisResults() {
+    appState.analysisResults.forEach((entry) => {
+      if (entry.previewUrl) {
+        window.URL.revokeObjectURL(entry.previewUrl);
+      }
+    });
+    appState.analysisResults = [];
+    appState.activeAnalysisIndex = -1;
+  }
+
+  function normalizeMeshPoint(point) {
+    if (!point || typeof point !== "object") {
+      return null;
+    }
+
+    const x = Number(point.x);
+    const y = Number(point.y);
+    const z = Number(point.z ?? 0);
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+
+    return {
+      x,
+      y,
+      z: Number.isFinite(z) ? z : 0,
+    };
+  }
+
+  function normalizeZonePoint(point) {
+    if (!point || typeof point !== "object") {
+      return null;
+    }
+
+    const x = Number(point.x);
+    const y = Number(point.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+
+    return { x, y };
+  }
+
+  function normalizeContourPoint(point) {
+    return normalizeZonePoint(point);
+  }
+
+  function normalizePigmentationContours(contours) {
+    if (!Array.isArray(contours)) {
+      return [];
+    }
+
+    return contours
+      .map((contour) => (Array.isArray(contour) ? contour.map(normalizeContourPoint).filter(Boolean) : []))
+      .filter((contour) => contour.length >= 3);
+  }
+
+  function normalizeAcneTypeDetection(detection) {
+    if (!detection || typeof detection !== "object") {
+      return null;
+    }
+
+    const x1 = Number(detection.x1);
+    const y1 = Number(detection.y1);
+    const x2 = Number(detection.x2);
+    const y2 = Number(detection.y2);
+    const confidence = Number(detection.confidence ?? 0);
+    if (![x1, y1, x2, y2].every(Number.isFinite)) {
+      return null;
+    }
+
+    return {
+      x1,
+      y1,
+      x2,
+      y2,
+      label: String(detection.label || "other"),
+      rawLabel: String(detection.raw_label || detection.label || "other"),
+      confidence: Number.isFinite(confidence) ? confidence : 0,
+      color: String(detection.color || "#3b82f6"),
+    };
+  }
+
+  function buildFaceMeshEdges(landmarks) {
+    if (!Array.isArray(landmarks) || landmarks.length < 3) {
+      return [];
+    }
+
+    let minX = landmarks[0].x;
+    let maxX = landmarks[0].x;
+    let minY = landmarks[0].y;
+    let maxY = landmarks[0].y;
+
+    landmarks.forEach((point) => {
+      minX = Math.min(minX, point.x);
+      maxX = Math.max(maxX, point.x);
+      minY = Math.min(minY, point.y);
+      maxY = Math.max(maxY, point.y);
+    });
+
+    const faceSpan = Math.max(maxX - minX, maxY - minY, 1);
+    const maxDistance = Math.max(faceSpan * 0.09, 18);
+    const maxDistanceSquared = maxDistance * maxDistance;
+    const edges = new Set();
+
+    landmarks.forEach((point, index) => {
+      const neighbors = [];
+
+      landmarks.forEach((candidate, candidateIndex) => {
+        if (index === candidateIndex) {
+          return;
+        }
+
+        const dx = point.x - candidate.x;
+        const dy = point.y - candidate.y;
+        const distanceSquared = (dx * dx) + (dy * dy);
+        if (distanceSquared > maxDistanceSquared) {
+          return;
+        }
+
+        neighbors.push({ candidateIndex, distanceSquared });
+      });
+
+      neighbors
+        .sort((left, right) => left.distanceSquared - right.distanceSquared)
+        .slice(0, 3)
+        .forEach(({ candidateIndex }) => {
+          const edgeStart = Math.min(index, candidateIndex);
+          const edgeEnd = Math.max(index, candidateIndex);
+          edges.add(`${edgeStart}:${edgeEnd}`);
+        });
+    });
+
+    return Array.from(edges, (edgeKey) => edgeKey.split(":").map((value) => Number(value)));
+  }
+
+  function getDepthStats(landmarks) {
+    const zValues = landmarks
+      .map((point) => Number(point.z ?? 0))
+      .filter((value) => Number.isFinite(value));
+
+    if (zValues.length === 0) {
+      return { min: 0, span: 1 };
+    }
+
+    const min = Math.min(...zValues);
+    const max = Math.max(...zValues);
+    return { min, span: Math.max(max - min, 0.0001) };
+  }
+
+  function drawBoxLabels(context, x, y, text, accent = "#0f172a") {
+    context.save();
+    context.font = "600 13px system-ui, sans-serif";
+    const textWidth = context.measureText(text).width;
+    const width = textWidth + 20;
+    const height = 24;
+    const rawLabelX = x - (textWidth / 2) - 10;
+    const rawLabelY = y - 14;
+    const labelX = Math.min(Math.max(8, rawLabelX), Math.max(8, context.canvas.width - width - 8));
+    const labelY = Math.min(Math.max(8, rawLabelY), Math.max(8, context.canvas.height - height - 8));
+
+    context.fillStyle = "rgba(15, 23, 42, 0.86)";
+    context.fillRect(labelX, labelY, width, height);
+    context.strokeStyle = accent;
+    context.lineWidth = 1;
+    context.strokeRect(labelX, labelY, width, height);
+    context.fillStyle = "#f8fafc";
+    context.textBaseline = "middle";
+    context.fillText(text, labelX + 10, labelY + (height / 2));
+    context.restore();
+  }
+
+  function drawFaceZones(context, zones, offsetX, offsetY) {
+    Object.entries(zones).forEach(([zoneName, zonePoints]) => {
+      if (!Array.isArray(zonePoints) || zonePoints.length < 3) {
+        return;
+      }
+
+      const style = faceZoneStyles[zoneName] || { fill: "rgba(148, 163, 184, 0.16)", stroke: "#94a3b8" };
+      context.save();
+      context.beginPath();
+      zonePoints.forEach((point, index) => {
+        const drawX = point.x + offsetX;
+        const drawY = point.y + offsetY;
+        if (index === 0) {
+          context.moveTo(drawX, drawY);
+        } else {
+          context.lineTo(drawX, drawY);
+        }
+      });
+      context.closePath();
+      context.fillStyle = style.fill;
+      context.fill();
+      context.strokeStyle = style.stroke;
+      context.lineWidth = 2;
+      context.stroke();
+      context.restore();
+    });
+  }
+
+  function getZoneCentroid(zonePoints) {
+    if (!Array.isArray(zonePoints) || zonePoints.length === 0) {
+      return null;
+    }
+
+    const total = zonePoints.reduce((accumulator, point) => ({
+      x: accumulator.x + point.x,
+      y: accumulator.y + point.y,
+    }), { x: 0, y: 0 });
+
+    return {
+      x: total.x / zonePoints.length,
+      y: total.y / zonePoints.length,
+    };
+  }
+
+  function drawFaceZoneLabels(context, zones, offsetX, offsetY) {
+    faceZoneLabelGroups.forEach(({ label, zoneNames, offsetX: labelOffsetX = 0, offsetY: labelOffsetY = 0 }) => {
+      const centroids = zoneNames
+        .map((zoneName) => getZoneCentroid(zones[zoneName]))
+        .filter(Boolean);
+
+      if (centroids.length === 0) {
+        return;
+      }
+
+      const average = centroids.reduce((accumulator, point) => ({
+        x: accumulator.x + point.x,
+        y: accumulator.y + point.y,
+      }), { x: 0, y: 0 });
+
+      drawBoxLabels(
+        context,
+        (average.x / centroids.length) + offsetX + labelOffsetX,
+        (average.y / centroids.length) + offsetY + labelOffsetY,
+        label,
+        "#38bdf8",
+      );
+    });
+  }
+
+  function drawFaceMesh(context, landmarks, offsetX, offsetY) {
+    if (!Array.isArray(landmarks) || landmarks.length === 0) {
+      return;
+    }
+
+    const edges = buildFaceMeshEdges(landmarks);
+    const depthStats = getDepthStats(landmarks);
+
+    edges.forEach(([startIndex, endIndex]) => {
+      const start = landmarks[startIndex];
+      const end = landmarks[endIndex];
+      if (!start || !end) {
+        return;
+      }
+
+      const depthRatio = Math.min(
+        1,
+        Math.max(0, (((start.z + end.z) / 2) - depthStats.min) / depthStats.span),
+      );
+      const lineAlpha = (0.38 - (depthRatio * 0.16)).toFixed(3);
+
+      context.save();
+      context.beginPath();
+      context.moveTo(start.x + offsetX, start.y + offsetY);
+      context.lineTo(end.x + offsetX, end.y + offsetY);
+      context.strokeStyle = `rgba(125, 211, 252, ${lineAlpha})`;
+      context.lineWidth = 1;
+      context.stroke();
+      context.restore();
+    });
+
+    landmarks.forEach((point) => {
+      const depthRatio = Math.min(1, Math.max(0, ((point.z - depthStats.min) / depthStats.span)));
+      const radius = 1.1 + ((1 - depthRatio) * 1.5);
+      const pointAlpha = (0.55 + ((1 - depthRatio) * 0.3)).toFixed(3);
+
+      context.save();
+      context.beginPath();
+      context.arc(point.x + offsetX, point.y + offsetY, radius, 0, Math.PI * 2);
+      context.fillStyle = `rgba(255, 255, 255, ${pointAlpha})`;
+      context.fill();
+      context.restore();
+    });
+  }
+
+  function drawPigmentationContours(context, contours, offsetX, offsetY) {
+    if (!Array.isArray(contours) || contours.length === 0) {
+      return;
+    }
+
+    contours.forEach((contour) => {
+      if (!Array.isArray(contour) || contour.length < 3) {
+        return;
+      }
+
+      context.save();
+      context.beginPath();
+      contour.forEach((point, index) => {
+        const drawX = point.x + offsetX;
+        const drawY = point.y + offsetY;
+        if (index === 0) {
+          context.moveTo(drawX, drawY);
+        } else {
+          context.lineTo(drawX, drawY);
+        }
+      });
+      context.closePath();
+      context.fillStyle = "rgba(37, 99, 235, 0.16)";
+      context.fill();
+      context.strokeStyle = "#1d4ed8";
+      context.lineWidth = 2;
+      context.stroke();
+      context.restore();
+    });
+  }
+
+  function drawDetectionBoxes(context, boxes, offsetX, offsetY) {
+    context.save();
+    context.strokeStyle = "#22c55e";
+    context.fillStyle = "#22c55e";
+    context.lineWidth = 2;
+    context.font = "16px sans-serif";
+
+    boxes.forEach((box, index) => {
+      const [x1, y1, x2, y2] = box;
+      context.strokeRect(x1 + offsetX, y1 + offsetY, x2 - x1, y2 - y1);
+      context.fillText(`ID ${index + 1}`, x1 + offsetX, Math.max(18, y1 + offsetY - 6));
+    });
+
+    context.restore();
+  }
+
+  function drawAcneTypeDetections(context, detections, offsetX, offsetY) {
+    if (!Array.isArray(detections) || detections.length === 0) {
+      return;
+    }
+
+    context.save();
+    context.lineWidth = 2;
+    context.font = "16px sans-serif";
+    context.textBaseline = "top";
+
+    detections.forEach((detection) => {
+      const width = detection.x2 - detection.x1;
+      const height = detection.y2 - detection.y1;
+      const accentColor = detection.color || "#3b82f6";
+      const label = `${detection.label} ${detection.confidence.toFixed(2)}`;
+      const textMetrics = context.measureText(label);
+      const textWidth = Math.ceil(textMetrics.width);
+      const boxX = detection.x1 + offsetX;
+      const boxY = detection.y1 + offsetY;
+      const labelHeight = 24;
+      const labelY = Math.max(0, boxY - labelHeight);
+
+      context.strokeStyle = accentColor;
+      context.strokeRect(boxX, boxY, width, height);
+      context.fillStyle = accentColor;
+      context.fillRect(boxX, labelY, textWidth + 14, labelHeight);
+      context.fillStyle = "#ffffff";
+      context.fillText(label, boxX + 7, labelY + 4);
+    });
+
+    context.restore();
+  }
+
+  function buildAcneTypeSummary(data = {}) {
+    if (!data.acne_type_available) {
+      return "Acne-type model is not configured yet for this project.";
+    }
+
+    const counts = data.acne_type_counts || {};
+    const comedonal = Number(counts.comedonal || 0);
+    const inflammatory = Number(counts.inflammatory || 0);
+    const other = Number(counts.other || 0);
+    const total = comedonal + inflammatory + other;
+
+    if (total === 0) {
+      return "Acne-type model ran on this image, but no acne-type detections were returned.";
+    }
+
+    return `Acne-type view shows ${total} typed detection${total === 1 ? "" : "s"}: ${comedonal} comedonal, ${inflammatory} inflammatory, ${other} other.`;
+  }
+
+  function drawDetectionPreview(imageUrl, boxes = [], overlayImageUrl = "", faceData = {}, viewMode = appState.analysisViewMode) {
+    const normalizedLandmarks = Array.isArray(faceData.landmarks)
+      ? faceData.landmarks.map(normalizeMeshPoint).filter(Boolean)
+      : [];
+    const normalizedZones = Object.fromEntries(
+      Object.entries(faceData.zones || {}).map(([zoneName, zonePoints]) => [
+        zoneName,
+        Array.isArray(zonePoints) ? zonePoints.map(normalizeZonePoint).filter(Boolean) : [],
+      ]),
+    );
+    const normalizedPigmentationContours = normalizePigmentationContours(faceData.pigmentation_contours);
+    const normalizedAcneTypeDetections = Array.isArray(faceData.acne_type_detections)
+      ? faceData.acne_type_detections.map(normalizeAcneTypeDetection).filter(Boolean)
+      : [];
+    const acneTypeProcessedImageUrl = faceData.acne_type_processed_image_url || "";
+    const regionBoxes = Array.isArray(faceData.region_boxes) ? faceData.region_boxes : [];
+    const hasBoxes = Array.isArray(boxes) && boxes.length > 0;
+    const hasRegionBoxes = regionBoxes.length > 0;
+    const hasFaceOverlay = normalizedLandmarks.length > 0 || Object.values(normalizedZones).some((zonePoints) => zonePoints.length >= 3);
+    const hasPigmentationOverlay = normalizedPigmentationContours.length > 0 || Object.values(normalizedZones).some((zonePoints) => zonePoints.length >= 3);
+    const hasAcneTypeOverlay = Boolean(acneTypeProcessedImageUrl) || normalizedAcneTypeDetections.length > 0;
+    const canRenderModeClientSide = (
+      (viewMode === "all" && (hasBoxes || hasRegionBoxes || hasFaceOverlay || hasPigmentationOverlay || hasAcneTypeOverlay))
+      || (viewMode === "regions" && hasRegionBoxes)
+      || (viewMode === "acne-type" && normalizedAcneTypeDetections.length > 0 && !acneTypeProcessedImageUrl)
+      || (viewMode === "mesh" && hasFaceOverlay)
+      || (viewMode === "pigmentation" && hasPigmentationOverlay)
+    );
+    const previewUrl = viewMode === "acne-type"
+      ? (acneTypeProcessedImageUrl || imageUrl)
+      : ((canRenderModeClientSide && imageUrl) ? imageUrl : (overlayImageUrl || imageUrl));
+    if (!detectionCanvas || !previewUrl) {
+      return;
+    }
+
+    const context = detectionCanvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+
+    const image = new Image();
+    image.onload = () => {
+      const imageWidth = image.naturalWidth || image.width;
+      const imageHeight = image.naturalHeight || image.height;
+      const squareSize = Math.max(imageWidth, imageHeight);
+      const offsetX = (squareSize - imageWidth) / 2;
+      const offsetY = (squareSize - imageHeight) / 2;
+
+      detectionCanvas.width = squareSize;
+      detectionCanvas.height = squareSize;
+      context.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
+      context.fillStyle = "#0f172a";
+      context.fillRect(0, 0, detectionCanvas.width, detectionCanvas.height);
+      context.drawImage(image, offsetX, offsetY, imageWidth, imageHeight);
+
+      if (viewMode === "acne-type") {
+        if (!acneTypeProcessedImageUrl && hasAcneTypeOverlay) {
+          drawAcneTypeDetections(context, normalizedAcneTypeDetections, offsetX, offsetY);
+        }
+        return;
+      }
+
+      if (canRenderModeClientSide && (viewMode === "all" || viewMode === "pigmentation")) {
+        drawFaceZones(context, normalizedZones, offsetX, offsetY);
+      }
+
+      if (canRenderModeClientSide && (viewMode === "all" || viewMode === "pigmentation")) {
+        drawPigmentationContours(context, normalizedPigmentationContours, offsetX, offsetY);
+      }
+
+      if (canRenderModeClientSide && (viewMode === "all" || viewMode === "mesh")) {
+        drawFaceMesh(context, normalizedLandmarks, offsetX, offsetY);
+      }
+
+      if (canRenderModeClientSide && (viewMode === "all" || viewMode === "mesh" || viewMode === "pigmentation")) {
+        drawFaceZoneLabels(context, normalizedZones, offsetX, offsetY);
+      }
+
+      if (canRenderModeClientSide && (viewMode === "all" || viewMode === "regions") && hasRegionBoxes) {
+        drawDetectionBoxes(context, regionBoxes, offsetX, offsetY);
+      }
+
+      if (canRenderModeClientSide && viewMode === "all" && hasAcneTypeOverlay) {
+        drawAcneTypeDetections(context, normalizedAcneTypeDetections, offsetX, offsetY);
+      }
+    };
+    image.src = previewUrl;
+  }
+
+  function renderActiveAnalysis(entry) {
+    const data = entry?.data || {};
+    imageCompareGrid?.classList.remove("is-empty");
+    updateAnalysisViewButtons();
+    if (originalImage) {
+      originalImage.src = entry?.previewUrl || "";
+    }
+    const lesionCount = data.acne_count ?? 0;
+    const regionCount = data.region_count ?? (Array.isArray(data.region_boxes) ? data.region_boxes.length : 0);
+    const faceSummary = data.face_detected
+      ? " Face mesh and labeled zones are shown in the overlay."
+      : " Face landmarks were not detected in this image.";
+    byId("summary-value").textContent = appState.analysisViewMode === "acne-type"
+      ? `${buildAcneTypeSummary(data)} Viewing: ${getAnalysisViewLabel(appState.analysisViewMode)}.`
+      : `Detected ${lesionCount} lesion${lesionCount === 1 ? "" : "s"} from acne-type analysis and ${regionCount} region${regionCount === 1 ? "" : "s"} from the region model. Viewing: ${getAnalysisViewLabel(appState.analysisViewMode)}.${faceSummary}`;
+    byId("acne-count-value").textContent = data.acne_count ?? "--";
+    byId("metric-acne-count-value").textContent = data.acne_count ?? "--";
+    byId("boxes-count-value").textContent = regionCount || 0;
+    byId("metric-boxes-count-value").textContent = regionCount || 0;
+    drawDetectionPreview(entry?.previewUrl || "", data.boxes || [], data.processed_image_url || "", data, appState.analysisViewMode);
+    setReportButtonState(downloadReportButton, reportStatus, null);
+  }
+
+  function resetAnalysisDisplay() {
+    imageCompareGrid?.classList.add("is-empty");
+    updateAnalysisViewButtons();
+    if (originalImage) {
+      originalImage.removeAttribute("src");
+    }
+    if (detectionCanvas) {
+      const context = detectionCanvas.getContext("2d");
+      context?.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
+    }
+    byId("summary-value").textContent = "Upload an image to detect acne-type lesions and compare them with the broader region model.";
+    byId("acne-count-value").textContent = "--";
+    byId("boxes-count-value").textContent = "--";
+    byId("metric-acne-count-value").textContent = "--";
+    byId("metric-boxes-count-value").textContent = "--";
+    setReportButtonState(downloadReportButton, reportStatus, null);
+  }
+
+  function updateVoiceGuideForAnalysis(data, shouldSpeak = false) {
+    updateVoiceGuideState(voiceGuideButton, false);
+  }
+
+  function updateUploadCaption() {
+    if (!uploadCaption) {
+      return;
+    }
+
+    const inputFileCount = Array.from(imageInput?.files || []).filter((file) => isAcceptedImageFile(file)).length;
+    const totalCount = selectedImages.length || inputFileCount;
+
+    if (totalCount === 0) {
+      uploadCaption.textContent = defaultUploadCaption;
+      return;
+    }
+
+    uploadCaption.textContent = `${totalCount} image${totalCount === 1 ? "" : "s"} ready for analysis. Add more anytime.`;
+  }
+
+  function updateAnalyzeButtonState() {
+    if (!analyzeButton) {
+      return;
+    }
+
+    const inputFiles = Array.from(imageInput?.files || []).filter((file) => isAcceptedImageFile(file));
+    const totalCount = selectedImages.length || inputFiles.length;
+
+    analyzeButton.disabled = false;
+    analyzeButton.setAttribute("aria-disabled", "false");
+    analyzeButton.textContent = totalCount > 0
+      ? `Analyze ${totalCount} Image${totalCount === 1 ? "" : "s"}`
+      : "Analyze Selected Images";
+    analyzeButton.dataset.defaultLabel = analyzeButton.textContent;
+
+    if (clearSelectionButton) {
+      clearSelectionButton.classList.toggle("hidden", selectedImages.length === 0 && inputFiles.length === 0);
+    }
+  }
+
+  function getPendingAnalysisEntries() {
+    if (selectedImages.length > 0) {
+      return selectedImages.map((entry) => ({
+        id: entry.id,
+        file: entry.file,
+        source: entry.source,
+        label: entry.file.name,
+        previewUrl: entry.previewUrl,
+      }));
+    }
+
+    return Array.from(imageInput?.files || [])
+      .filter((file) => isAcceptedImageFile(file))
+      .map((file) => ({
+        id: createBatchItemId("upload"),
+        file,
+        source: "upload",
+        label: file.name,
+        previewUrl: window.URL.createObjectURL(file),
+      }));
+  }
+
+  function renderSelectionList() {
+    if (!selectionList) {
+      return;
+    }
+
+    selectionList.innerHTML = "";
+
+    if (selectedImages.length === 0) {
+      const emptyState = document.createElement("p");
+      emptyState.className = "selection-empty";
+      emptyState.textContent = "No images selected yet.";
+      selectionList.appendChild(emptyState);
+      return;
+    }
+
+    selectedImages.forEach((entry) => {
+      const item = document.createElement("div");
+      item.className = "selection-card";
+
+      const thumb = document.createElement("div");
+      thumb.className = "selection-thumb";
+      const thumbImage = document.createElement("img");
+      thumbImage.src = entry.previewUrl;
+      thumbImage.alt = `${entry.file.name} preview`;
+      thumb.appendChild(thumbImage);
+
+      const meta = document.createElement("div");
+      meta.className = "selection-meta";
+      const name = document.createElement("strong");
+      name.className = "selection-name";
+      name.textContent = entry.file.name;
+      const source = document.createElement("span");
+      source.textContent = `${entry.source === "camera" ? "Camera" : "Upload"} | ${(entry.file.size / 1024 / 1024).toFixed(2)} MB`;
+      meta.append(name, source);
+
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.className = "selection-remove";
+      removeButton.textContent = "Remove";
+      removeButton.addEventListener("click", () => {
+        const target = selectedImages.find((candidate) => candidate.id === entry.id);
+        if (target?.previewUrl) {
+          window.URL.revokeObjectURL(target.previewUrl);
+        }
+        selectedImages = selectedImages.filter((candidate) => candidate.id !== entry.id);
+        renderSelectionList();
+        updateUploadCaption();
+        updateAnalyzeButtonState();
+        setMessage(analyzeStatus, "");
+      });
+
+      item.append(thumb, meta, removeButton);
+      selectionList.appendChild(item);
+    });
+  }
+
+  function renderAnalysisGallery() {
+    if (!analysisGallery) {
+      return;
+    }
+
+    analysisGallery.innerHTML = "";
+
+    if (appState.analysisResults.length === 0) {
+      const emptyState = document.createElement("p");
+      emptyState.className = "selection-empty";
+      emptyState.textContent = "Analyze one or more images to review them here.";
+      analysisGallery.appendChild(emptyState);
+      return;
+    }
+
+    appState.analysisResults.forEach((entry, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `analysis-gallery-item${index === appState.activeAnalysisIndex ? " is-active" : ""}`;
+
+      const thumb = document.createElement("div");
+      thumb.className = "analysis-gallery-thumb";
+      const thumbImage = document.createElement("img");
+      thumbImage.src = entry.previewUrl;
+      thumbImage.alt = `${entry.label} result preview`;
+      thumb.appendChild(thumbImage);
+
+      const copy = document.createElement("div");
+      copy.className = "analysis-gallery-copy";
+      const title = document.createElement("strong");
+      title.textContent = entry.label;
+      const meta = document.createElement("span");
+      meta.textContent = `${entry.data.acne_count} lesion${entry.data.acne_count === 1 ? "" : "s"} detected`;
+      copy.append(title, meta);
+
+      button.append(thumb, copy);
+      button.addEventListener("click", () => {
+        appState.activeAnalysisIndex = index;
+        renderAnalysisGallery();
+        renderActiveAnalysis(entry);
+        updateVoiceGuideForAnalysis(entry.data);
+        if (analysisBatchStatus) {
+          analysisBatchStatus.textContent = appState.analysisResults.length === 1
+            ? `Showing ${entry.label}.`
+            : `Showing ${index + 1} of ${appState.analysisResults.length}: ${entry.label}.`;
+        }
+      });
+
+      analysisGallery.appendChild(button);
+    });
+  }
+
+  function addFilesToSelection(files, source = "upload") {
+    const nextEntries = [];
+    let skippedNonImages = 0;
+    let skippedDuplicates = 0;
+
+    files.forEach((file) => {
+      if (!isAcceptedImageFile(file)) {
+        skippedNonImages += 1;
+        return;
+      }
+
+      const signature = [source, file.name, file.size, file.lastModified].join(":");
+      const exists = selectedImages.some((entry) => entry.signature === signature);
+      if (exists) {
+        skippedDuplicates += 1;
+        return;
+      }
+
+      nextEntries.push({
+        id: createBatchItemId(source),
+        file,
+        source,
+        signature,
+        previewUrl: window.URL.createObjectURL(file),
+      });
+    });
+
+    if (nextEntries.length === 0) {
+      updateUploadCaption();
+      updateAnalyzeButtonState();
+      if (skippedNonImages > 0) {
+        setMessage(analyzeStatus, "That file was not recognized as an image. Try JPG, PNG, WEBP, or HEIC.", "error");
+      } else if (skippedDuplicates > 0) {
+        setMessage(analyzeStatus, "That image is already in the queue.", "info");
+      }
+      return;
+    }
+
+    selectedImages = [...selectedImages, ...nextEntries];
+    renderSelectionList();
+    updateUploadCaption();
+    updateAnalyzeButtonState();
+
+    const suffix = skippedDuplicates > 0
+      ? ` ${skippedDuplicates} duplicate${skippedDuplicates === 1 ? " was" : "s were"} skipped.`
+      : "";
+    setMessage(analyzeStatus, `${nextEntries.length} image${nextEntries.length === 1 ? "" : "s"} added to the queue.${suffix}`, "success");
+  }
+
+  function clearSelectedImages() {
+    selectedImages.forEach((entry) => {
+      if (entry.previewUrl) {
+        window.URL.revokeObjectURL(entry.previewUrl);
+      }
+    });
+    selectedImages = [];
+    if (imageInput) {
+      imageInput.value = "";
+    }
+    renderSelectionList();
+    updateUploadCaption();
+    updateAnalyzeButtonState();
+  }
+
+  function stopCamera() {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      cameraStream = null;
+    }
+
+    if (cameraPreview) {
+      cameraPreview.srcObject = null;
+    }
+
+    cameraPanel?.classList.add("hidden");
+    if (cameraCaptureButton) {
+      cameraCaptureButton.disabled = true;
+    }
+    if (cameraStopButton) {
+      cameraStopButton.disabled = true;
+    }
   }
 
   renderUserProfile();
   renderSugarFreeStreak();
   updateVoiceGuideState(voiceGuideButton, false);
-  setReportButtonState(downloadReportButton, reportStatus, null);
-  renderZones(zonesList);
-  renderList(insightsList, [], "Insights will appear after analysis.");
-  renderList(correlationsList, [], "Correlations will appear after more logs.");
-  renderList(recommendationsList, [], "Recommendations will appear after analysis.");
+  resetAnalysisDisplay();
+  updateAnalysisViewButtons();
+  renderSelectionList();
+  renderAnalysisGallery();
+  updateUploadCaption();
+  updateAnalyzeButtonState();
 
-  imageInput?.addEventListener("change", () => {
-    const [file] = imageInput.files;
-    if (!file) {
-      byId("preview-wrapper")?.classList.add("hidden");
-      uploadCaption.textContent = "Use even lighting and keep your face centered.";
-      updateVoiceGuideState(voiceGuideButton, false);
-      setMessage(analyzeStatus, "");
+  analysisViewSwitcher?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-view-mode]");
+    if (!button) {
       return;
     }
 
-    uploadCaption.textContent = `Selected: ${file.name}`;
+    const nextViewMode = button.dataset.viewMode || "all";
+    if (nextViewMode === appState.analysisViewMode) {
+      return;
+    }
+
+    appState.analysisViewMode = nextViewMode;
+    updateAnalysisViewButtons();
+
+    const activeEntry = appState.analysisResults[appState.activeAnalysisIndex] || appState.analysisResults[0];
+    if (activeEntry) {
+      renderActiveAnalysis(activeEntry);
+    }
+  });
+
+  imageInput?.addEventListener("change", () => {
+    const files = Array.from(imageInput.files || []);
+    if (files.length === 0) {
+      updateUploadCaption();
+      updateAnalyzeButtonState();
+      return;
+    }
+
+    addFilesToSelection(files, "upload");
     updateVoiceGuideState(voiceGuideButton, false);
-    showPreview(file);
-    setMessage(analyzeStatus, "");
+  });
+
+  cameraStartButton?.addEventListener("click", async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMessage(analyzeStatus, "Camera capture is not supported in this browser.", "error");
+      return;
+    }
+
+    try {
+      stopCamera();
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 1600 },
+        },
+        audio: false,
+      });
+
+      if (cameraPreview) {
+        cameraPreview.srcObject = cameraStream;
+      }
+      cameraPanel?.classList.remove("hidden");
+      if (cameraCaptureButton) {
+        cameraCaptureButton.disabled = false;
+      }
+      if (cameraStopButton) {
+        cameraStopButton.disabled = false;
+      }
+      setMessage(analyzeStatus, "Camera is ready. Capture as many photos as you need.", "info");
+    } catch (error) {
+      setMessage(analyzeStatus, error.message || "Could not access the camera.", "error");
+    }
+  });
+
+  cameraCaptureButton?.addEventListener("click", async () => {
+    if (!cameraPreview || !cameraCanvas || !cameraStream) {
+      setMessage(analyzeStatus, "Open the camera before capturing a photo.", "error");
+      return;
+    }
+
+    if (!cameraPreview.videoWidth || !cameraPreview.videoHeight) {
+      setMessage(analyzeStatus, "Camera is still warming up. Try again in a moment.", "info");
+      return;
+    }
+
+    cameraCanvas.width = cameraPreview.videoWidth;
+    cameraCanvas.height = cameraPreview.videoHeight;
+    const context = cameraCanvas.getContext("2d");
+    if (!context) {
+      setMessage(analyzeStatus, "Could not capture the camera frame.", "error");
+      return;
+    }
+
+    context.drawImage(cameraPreview, 0, 0, cameraCanvas.width, cameraCanvas.height);
+    const blob = await new Promise((resolve) => cameraCanvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (!blob) {
+      setMessage(analyzeStatus, "Photo capture failed. Please try again.", "error");
+      return;
+    }
+
+    captureCount += 1;
+    const file = new File([blob], `camera-capture-${captureCount}.jpg`, {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
+    addFilesToSelection([file], "camera");
+    setMessage(analyzeStatus, "Photo captured and added to the queue.", "success");
+  });
+
+  cameraStopButton?.addEventListener("click", () => {
+    stopCamera();
+    setMessage(analyzeStatus, "Camera closed. Your queued images are still ready.", "info");
+  });
+
+  clearSelectionButton?.addEventListener("click", () => {
+    clearSelectedImages();
+    setMessage(analyzeStatus, "Selection cleared.", "info");
   });
 
   analyzeForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
 
-    const [file] = imageInput.files;
-    if (!file) {
-      setMessage(analyzeStatus, "Please choose an image first.", "error");
+    const pendingEntries = getPendingAnalysisEntries();
+    if (pendingEntries.length === 0) {
+      setMessage(analyzeStatus, "Please choose at least one image first.", "error");
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     setButtonLoading(analyzeButton, true, "Analyzing...");
-    setMessage(analyzeStatus, "Analyzing skin and generating intelligence...", "info");
+    updateVoiceGuideState(voiceGuideButton, false);
+    clearAnalysisResults();
+    renderAnalysisGallery();
+    if (analysisBatchStatus) {
+      analysisBatchStatus.textContent = `Analyzing ${pendingEntries.length} image${pendingEntries.length === 1 ? "" : "s"}...`;
+    }
 
     try {
-      const data = await apiFetch("/analyze", { method: "POST", body: formData });
-      renderAnalysis(data);
+      const completed = [];
+      const failures = [];
 
-      const reportMessage = data.report?.report_id ? " Downloadable report is ready at the top." : "";
-      if (hasDetectedInconvenience(data)) {
-        const voiceMessage = buildVoiceGuideMessage(data);
-        updateVoiceGuideState(voiceGuideButton, true, voiceMessage);
-        speakGuide(voiceMessage);
-        setMessage(analyzeStatus, `Analysis complete. Voice guide activated because a concern was detected.${reportMessage}`, "success");
-      } else {
-        updateVoiceGuideState(voiceGuideButton, false);
-        setMessage(analyzeStatus, `Analysis complete. No inconvenience detected, so voice guide stayed off.${reportMessage}`, "success");
+      for (let index = 0; index < pendingEntries.length; index += 1) {
+        const entry = pendingEntries[index];
+        const formData = new FormData();
+        formData.append("file", entry.file, entry.file.name);
+        setMessage(analyzeStatus, `Analyzing image ${index + 1} of ${pendingEntries.length}: ${entry.file.name}`, "info");
+
+        try {
+          const data = await apiFetch("/analyze", { method: "POST", body: formData });
+          completed.push({
+            id: entry.id,
+            label: entry.file.name,
+            source: entry.source,
+            previewUrl: window.URL.createObjectURL(entry.file),
+            data,
+          });
+          appState.analysisResults = [...completed];
+          if (appState.activeAnalysisIndex === -1) {
+            appState.activeAnalysisIndex = 0;
+            renderActiveAnalysis(completed[0]);
+            updateVoiceGuideForAnalysis(data);
+          }
+          renderAnalysisGallery();
+        } catch (error) {
+          failures.push(`${entry.file.name}: ${error.message || "Analysis failed."}`);
+        }
       }
+
+      if (completed.length === 0) {
+        throw new Error(failures[0] || "Analysis failed.");
+      }
+
+      appState.analysisResults = completed;
+      appState.activeAnalysisIndex = 0;
+      renderActiveAnalysis(completed[0]);
+      renderAnalysisGallery();
+      updateVoiceGuideForAnalysis(completed[0].data, true);
+
+      if (analysisBatchStatus) {
+        analysisBatchStatus.textContent = completed.length === 1
+          ? `Showing ${completed[0].label}.`
+          : `Showing 1 of ${completed.length}: ${completed[0].label}.`;
+      }
+
+      const successMessage = failures.length > 0
+        ? `Analysis complete for ${completed.length} image${completed.length === 1 ? "" : "s"}. ${failures.length} failed.`
+        : `Analysis complete for ${completed.length} image${completed.length === 1 ? "" : "s"}.`;
+      setMessage(analyzeStatus, successMessage, failures.length > 0 ? "info" : "success");
     } catch (error) {
       setMessage(analyzeStatus, error.message || "Analysis failed.", "error");
     } finally {
       setButtonLoading(analyzeButton, false, "Analyzing...");
     }
   });
+
+  window.addEventListener("beforeunload", stopCamera);
 
   async function saveDashboardSugarCheckin(sugarFree) {
     const activeButton = sugarFree ? sugarKeepButton : sugarBreakButton;

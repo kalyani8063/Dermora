@@ -334,12 +334,13 @@ async def analyze(file: UploadFile = File(...), current_user=Depends(get_current
     filename = f"{file_id}{extension}"
     destination = UPLOAD_DIR / filename
     processed_destination = PROCESSED_DIR / f"{file_id}_processed.jpg"
-
+    acne_type_processed_destination = PROCESSED_DIR / f"{file_id}_acne_type.jpg"
     with destination.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
     image_url = f"/uploads/{filename}"
     processed_image_url = f"/processed/{file_id}_processed.jpg"
+    acne_type_processed_image_url = f"/processed/{file_id}_acne_type.jpg"
     previous_analysis = get_last_analysis(current_user["user_id"])
     recent_logs = get_recent_logs(current_user["user_id"])
 
@@ -348,7 +349,8 @@ async def analyze(file: UploadFile = File(...), current_user=Depends(get_current
         image_url=image_url,
         processed_image_path=processed_destination,
         processed_image_url=processed_image_url,
-        report_output_dir=REPORT_DIR,
+        acne_type_processed_image_path=acne_type_processed_destination,
+        acne_type_processed_image_url=acne_type_processed_image_url,
         user_profile=current_user,
         previous_analysis=previous_analysis,
         recent_logs=recent_logs,

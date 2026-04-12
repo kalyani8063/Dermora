@@ -1,13 +1,27 @@
+import logging
 import os
 import smtplib
 from email.message import EmailMessage
 
 
+logger = logging.getLogger(__name__)
+PLACEHOLDER_EMAIL_VALUES = {
+    "your-email@gmail.com",
+    "your-16-digit-app-password",
+}
+
+
+def _clean_email_setting(value: str) -> str:
+    cleaned = value.strip()
+    if cleaned in PLACEHOLDER_EMAIL_VALUES:
+        return ""
+    return cleaned
+
 SMTP_HOST = os.getenv("EMAIL_SMTP_HOST", "").strip()
 SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "587"))
-SMTP_USERNAME = os.getenv("EMAIL_SMTP_USERNAME", "").strip()
-SMTP_PASSWORD = os.getenv("EMAIL_SMTP_PASSWORD", "").strip()
-SMTP_FROM = os.getenv("EMAIL_FROM", SMTP_USERNAME or "no-reply@dermora.local").strip()
+SMTP_USERNAME = _clean_email_setting(os.getenv("EMAIL_SMTP_USERNAME", ""))
+SMTP_PASSWORD = _clean_email_setting(os.getenv("EMAIL_SMTP_PASSWORD", ""))
+SMTP_FROM = _clean_email_setting(os.getenv("EMAIL_FROM", SMTP_USERNAME or "no-reply@dermora.local"))
 SMTP_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
 SMTP_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() == "true"
 OTP_EXPIRE_MINUTES = int(os.getenv("OTP_EXPIRE_MINUTES", "5"))
@@ -43,6 +57,7 @@ def send_email(to_email: str, subject: str, body: str) -> bool:
             server.send_message(message)
         return True
     except Exception:
+        logger.exception("Failed to send email to %s using SMTP host '%s'.", to_email, SMTP_HOST or "<unset>")
         return False
 
 

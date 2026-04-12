@@ -144,6 +144,12 @@ ENV/
 env.bak/
 venv.bak/
 
+# Dermora generated/runtime files
+backend/.ultralytics/
+backend/processed/
+backend/reports/
+backend/uploads/
+
 # Spyder project settings
 .spyderproject
 .spyproject

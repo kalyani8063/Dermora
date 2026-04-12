@@ -34,7 +34,11 @@ For Gmail:
 - `EMAIL_FROM=your-email@gmail.com`
 - `EMAIL_USE_TLS=true`
 - `EMAIL_USE_SSL=false`
-- `DERMORA_EXPOSE_DEV_OTP=false`
+- `DERMORA_EXPOSE_DEV_OTP=false` once SMTP is working
+
+Local setup tip:
+
+- Keep `DERMORA_EXPOSE_DEV_OTP=true` while SMTP is not configured yet so the API can return the development OTP in the response instead of failing registration.
 
 Important:
 
@@ -79,7 +83,7 @@ Unknown extra fields are preserved under `additional_context` for future extensi
 
 ## JWT
 
-Set `JWT_SECRET_KEY` in production to replace the development secret.
+Set `JWT_SECRET_KEY` in production to a value that is at least 32 bytes long to replace the development secret.
 
 ## ML swap point
 

@@ -1,55 +1,49 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
-class ZoneSummary(BaseModel):
-    count: int
-    severity: str
+class MeshLandmark(BaseModel):
+    x: int
+    y: int
+    z: float = 0.0
 
 
-class ZoneDetails(BaseModel):
-    forehead: ZoneSummary
-    left_cheek: ZoneSummary
-    right_cheek: ZoneSummary
-    nose: ZoneSummary
-    chin: ZoneSummary
+class ZonePoint(BaseModel):
+    x: int
+    y: int
 
 
-class AcneDetails(BaseModel):
-    count: int
-    severity: str
-    boxes: list[list[int]]
+class PigmentationContourPoint(BaseModel):
+    x: int
+    y: int
 
 
-class PigmentationDetails(BaseModel):
-    coverage: int
-    intensity: str
-
-
-class TrendDetails(BaseModel):
-    previous_acne_count: int
-    change: int
-    status: str
-
-
-class ReportArtifact(BaseModel):
-    report_id: str
-    session_id: str
-    filename: str
+class AcneTypeDetection(BaseModel):
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    label: str
+    raw_label: str = ""
+    confidence: float
+    color: str = ""
 
 
 class AnalysisResponse(BaseModel):
-    image_url: str
-    processed_image_url: str
-    acne: AcneDetails
-    zones: ZoneDetails
-    pigmentation: PigmentationDetails
-    score: int
-    confidence: int
-    summary: str
-    insights: list[str]
-    recommendations: list[str]
-    trend: TrendDetails
-    correlations: list[str]
-    prediction: str
-    analysis_date: str
-    report: ReportArtifact | None = None
+    boxes: list[list[int]]
+    acne_count: int
+    lesion_source: str = "region"
+    region_boxes: list[list[int]] = Field(default_factory=list)
+    region_count: int = 0
+    processed_image_url: str | None = None
+    zone_counts: dict[str, int] = Field(default_factory=dict)
+    face_detected: bool = False
+    landmarks: list[MeshLandmark] = Field(default_factory=list)
+    zones: dict[str, list[ZonePoint]] = Field(default_factory=dict)
+    pigmentation_contours: list[list[PigmentationContourPoint]] = Field(default_factory=list)
+    pigmentation_contour_count: int = 0
+    coverage_percentage: float = 0.0
+    pigmentation_severity: str = "Low"
+    acne_type_available: bool = False
+    acne_type_processed_image_url: str | None = None
+    acne_type_detections: list[AcneTypeDetection] = Field(default_factory=list)
+    acne_type_counts: dict[str, int] = Field(default_factory=dict)

@@ -4,17 +4,79 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Dashboard | Dermora</title>
-    <link rel="stylesheet" href="/assets/styles.css" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260411-4" />
+    <style>
+      #image-compare-grid.visual-report-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        align-items: start;
+      }
+
+      #image-compare-grid.visual-report-grid .visual-report-card {
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      #image-compare-grid.visual-report-grid .visual-report-frame {
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        border-radius: 20px;
+        overflow: hidden;
+        background: #0f172a;
+      }
+
+      #image-compare-grid.visual-report-grid .visual-report-frame img,
+      #image-compare-grid.visual-report-grid .visual-report-frame canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+      }
+
+      .analysis-view-switcher {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 14px 0 18px;
+      }
+
+      .analysis-view-button {
+        border: 1px solid rgba(24, 18, 27, 0.12);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.88);
+        color: #18121b;
+        padding: 10px 16px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease, color 180ms ease;
+      }
+
+      .analysis-view-button.is-active {
+        background: linear-gradient(135deg, #d85c92, #b33f72);
+        color: #fff;
+        border-color: transparent;
+      }
+
+      .analysis-view-button:hover {
+        transform: translateY(-1px);
+      }
+
+      @media (max-width: 800px) {
+        #image-compare-grid.visual-report-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+    </style>
   </head>
   <body data-page="dashboard">
     <header class="site-header site-header-solid">
       <div class="nav-shell">
         <a href="/dashboard" class="nav-brand"><img src="/assets/images/logo.png" alt="Dermora logo" class="nav-logo" /><span class="nav-brand-text">Dermora</span></a>
         <nav class="nav-actions" aria-label="Primary">
-          <button id="download-report-button" class="button-secondary" type="button" disabled aria-disabled="true" title="Run an analysis to generate a downloadable report.">Download Report</button>
           <a href="/profile" class="button-secondary">Profile</a>
           <a href="/health-logs" class="button-secondary">Health Logs</a>
-          <button id="voice-guide-button" class="button-secondary" type="button" disabled aria-disabled="true" title="Voice guide activates after a scan when a concern is detected.">Voice Guide</button>
           <button id="logout-button" class="button-primary" type="button">Logout</button>
         </nav>
       </div>
@@ -49,10 +111,10 @@
         <div class="card dashboard-header-card">
           <div class="dashboard-header-content">
             <div>
-              <p class="eyebrow">Multi-Modal Health Intelligence</p>
+              <p class="eyebrow">YOLO Detection Dashboard</p>
               <h1 class="dashboard-title">Welcome back, <span id="user-name">User</span></h1>
               <p id="user-meta" class="body-copy compact-copy"></p>
-              <p id="report-status" class="form-status">Run an analysis to generate a downloadable clinical-reference report.</p>
+              <p class="form-status">Run YOLO on your image and review the detected lesion bounding boxes.</p>
             </div>
             <aside id="sugar-streak-widget" class="mini-streak-widget" aria-label="Sugar-free streak">
               <button id="sugar-streak-keep" class="mini-streak-badge" type="button" title="Log today as sugar-free and keep the streak going.">
@@ -75,23 +137,19 @@
         <div class="dashboard-grid">
           <article class="card dashboard-card dashboard-summary-card dashboard-card-wide">
             <div class="card-heading">
-              <p class="eyebrow">Skin Summary</p>
-              <h2 id="score-value">--</h2>
-              <p class="metric-label">Skin Score</p>
+              <p class="eyebrow">Detection Summary</p>
+              <h2 id="acne-count-value">--</h2>
+              <p class="metric-label">Detected Lesions</p>
             </div>
-            <p id="summary-value" class="body-copy">Run an analysis to generate your first report.</p>
+            <p id="summary-value" class="body-copy">Upload an image to run direct YOLO inference and review the detected lesion boxes.</p>
             <div class="summary-badges">
               <div class="data-chip">
-                <span>Confidence</span>
-                <strong id="confidence-value">--</strong>
+                <span>Mode</span>
+                <strong>YOLO + Face Mesh</strong>
               </div>
               <div class="data-chip">
-                <span>Trend</span>
-                <strong id="trend-status-value">--</strong>
-              </div>
-              <div class="data-chip">
-                <span>Prediction</span>
-                <strong id="prediction-value">--</strong>
+                <span>Regions</span>
+                <strong id="boxes-count-value">--</strong>
               </div>
             </div>
           </article>
@@ -103,14 +161,24 @@
             </div>
             <form id="analyze-form" class="form-stack">
               <label class="upload-dropzone" for="image-input">
-                <input id="image-input" name="file" type="file" accept="image/*" required />
-                <span class="upload-title">Choose image</span>
-                <span id="upload-caption" class="upload-caption">Use even lighting and keep your face centered.</span>
+                <input id="image-input" name="file" type="file" accept="image/*" multiple />
+                <span class="upload-title">Choose one or more images</span>
+                <span id="upload-caption" class="upload-caption">Use even lighting and keep your face centered. You can add photos from your gallery or camera.</span>
               </label>
-              <div id="preview-wrapper" class="preview-wrapper hidden">
-                <img id="preview-image" alt="Selected preview" />
+              <div class="camera-actions">
+                <button id="camera-start-button" class="button-secondary" type="button">Open Camera</button>
+                <button id="camera-capture-button" class="button-secondary" type="button" disabled>Capture Photo</button>
+                <button id="camera-stop-button" class="button-ghost" type="button" disabled>Close Camera</button>
               </div>
-              <button id="analyze-button" class="button-primary" type="submit">Analyze Skin</button>
+              <div id="camera-panel" class="camera-panel hidden">
+                <video id="camera-preview" autoplay playsinline muted></video>
+                <canvas id="camera-canvas" class="hidden"></canvas>
+              </div>
+              <div id="selection-list" class="selection-list">
+                <p class="selection-empty">No images selected yet.</p>
+              </div>
+              <button id="clear-selection-button" class="text-button hidden" type="button">Clear selected images</button>
+              <button id="analyze-button" class="button-primary" type="submit">Analyze Selected Images</button>
               <p id="analyze-status" class="form-status" aria-live="polite"></p>
             </form>
           </article>
@@ -118,52 +186,37 @@
           <article class="card dashboard-card">
             <div class="card-heading">
               <p class="eyebrow">Analysis Results</p>
-              <h3>Snapshot Metrics</h3>
+              <h3>Detection Metrics</h3>
             </div>
             <div class="stats-grid">
-              <div class="stat-card stat-card-highlight"><span>Acne Count</span><strong id="acne-count-value">--</strong></div>
-              <div class="stat-card"><span>Severity</span><strong id="severity-value">--</strong></div>
-              <div class="stat-card"><span>Pigmentation</span><strong id="pigmentation-coverage-value">--</strong></div>
-              <div class="stat-card"><span>Boxes</span><strong id="boxes-count-value">--</strong></div>
+              <div class="stat-card stat-card-highlight"><span>Acne Count</span><strong id="metric-acne-count-value">--</strong></div>
+              <div class="stat-card"><span>Regions</span><strong id="metric-boxes-count-value">--</strong></div>
             </div>
           </article>
 
           <article class="card dashboard-card dashboard-card-wide">
             <div class="card-heading">
               <p class="eyebrow">Analysis Results</p>
-              <h3>Visual Report</h3>
+              <h3>Detection Preview</h3>
             </div>
-            <div class="image-compare-grid">
-              <div class="image-stack">
+            <p id="analysis-batch-status" class="helper-text">Each completed scan will appear here.</p>
+            <div id="analysis-view-switcher" class="analysis-view-switcher" aria-label="Analysis view modes">
+              <button class="analysis-view-button is-active" type="button" data-view-mode="all">Everything</button>
+              <button class="analysis-view-button" type="button" data-view-mode="regions">Region Detected</button>
+              <button class="analysis-view-button" type="button" data-view-mode="acne-type">Acne Type</button>
+              <button class="analysis-view-button" type="button" data-view-mode="mesh">Facial Mesh</button>
+              <button class="analysis-view-button" type="button" data-view-mode="pigmentation">Hyperpigmentation Zones</button>
+            </div>
+            <div id="image-compare-grid" class="visual-report-grid is-empty">
+              <div class="visual-report-card">
                 <p class="field-label">Original</p>
-                <div class="image-frame"><img id="result-image" alt="Original uploaded skin image" /></div>
+                <div class="visual-report-frame"><img id="original-image" alt="Original uploaded skin image" /></div>
               </div>
-              <div class="image-stack">
-                <p class="field-label">Overlay</p>
-                <div class="image-frame"><img id="processed-image" alt="Processed skin image with overlays" /></div>
+              <div class="visual-report-card">
+                <p id="overlay-view-label" class="field-label">Everything</p>
+                <div class="visual-report-frame"><canvas id="detection-canvas" aria-label="YOLO lesion detections"></canvas></div>
               </div>
             </div>
-          </article>
-
-          <article class="card dashboard-card">
-            <div class="card-heading">
-              <p class="eyebrow">Skin Summary</p>
-              <h3>Progress</h3>
-            </div>
-            <div class="stats-grid">
-              <div class="stat-card"><span>Previous Acne</span><strong id="previous-acne-count-value">--</strong></div>
-              <div class="stat-card"><span>Current Acne</span><strong id="current-acne-count-value">--</strong></div>
-              <div class="stat-card"><span>Change</span><strong id="trend-change-value">--</strong></div>
-              <div class="stat-card"><span>Analysis Time</span><strong id="analysis-date-value">--</strong></div>
-            </div>
-          </article>
-
-          <article class="card dashboard-card">
-            <div class="card-heading">
-              <p class="eyebrow">Analysis Results</p>
-              <h3>Zone Breakdown</h3>
-            </div>
-            <div id="zones-list" class="zone-list"></div>
           </article>
 
           <article class="card dashboard-card">
@@ -179,31 +232,15 @@
 
           <article class="card dashboard-card">
             <div class="card-heading">
-              <p class="eyebrow">Insights</p>
-              <h3>Pattern Signals</h3>
+              <p class="eyebrow">Detection Notes</p>
+              <h3>Minimal Pipeline</h3>
             </div>
-            <ul id="insights-list" class="pill-list"></ul>
-          </article>
-
-          <article class="card dashboard-card">
-            <div class="card-heading">
-              <p class="eyebrow">Insights</p>
-              <h3>Correlations</h3>
-            </div>
-            <ul id="correlations-list" class="pill-list"></ul>
-          </article>
-
-          <article class="card dashboard-card dashboard-card-wide">
-            <div class="card-heading">
-              <p class="eyebrow">Recommendations</p>
-              <h3>Next Best Actions</h3>
-            </div>
-            <ul id="recommendations-list" class="pill-list"></ul>
+            <p class="body-copy">Dermora now combines YOLO detections with face landmarks, zone overlays, and hyperpigmentation contour mapping.</p>
           </article>
         </div>
       </section>
     </main>
 
-    <script src="/assets/app.js"></script>
+    <script src="/assets/app.js?v=20260412-5"></script>
   </body>
 </html>

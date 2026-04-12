@@ -7,6 +7,7 @@ import secrets
 from fastapi import HTTPException, status
 
 from backend.services.email_service import email_enabled, send_otp_email
+from backend.services.security_settings import DEFAULT_JWT_SECRET, DEFAULT_OTP_SECRET, resolve_secret
 from backend.services.storage import (
     delete_otp_verifications,
     get_otp_verification,
@@ -27,7 +28,12 @@ OTP_EXPIRE_MINUTES = _safe_int_env("OTP_EXPIRE_MINUTES", 5)
 OTP_RESEND_SECONDS = _safe_int_env("OTP_RESEND_SECONDS", 30)
 OTP_MAX_ATTEMPTS = _safe_int_env("OTP_MAX_ATTEMPTS", 5)
 EXPOSE_DEV_OTP = os.getenv("DERMORA_EXPOSE_DEV_OTP", "true").lower() == "true"
-OTP_SECRET = os.getenv("OTP_SECRET_KEY", os.getenv("JWT_SECRET_KEY", "dermora-otp-secret"))
+JWT_SECRET = resolve_secret("JWT_SECRET_KEY", DEFAULT_JWT_SECRET, label="JWT secret")
+OTP_SECRET = resolve_secret(
+    "OTP_SECRET_KEY",
+    JWT_SECRET if JWT_SECRET != DEFAULT_JWT_SECRET else DEFAULT_OTP_SECRET,
+    label="OTP secret",
+)
 
 
 def generate_otp() -> str:
@@ -53,6 +59,12 @@ def _as_utc_datetime(value) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _otp_delivery_error_message() -> str:
+    if email_enabled():
+        return "Failed to send OTP email. Check your SMTP settings and try again."
+    return "OTP email is not configured. Set SMTP variables or enable DERMORA_EXPOSE_DEV_OTP for local development."
 
 
 def request_otp(email: str, purpose: str) -> dict:
@@ -89,8 +101,9 @@ def request_otp(email: str, purpose: str) -> dict:
     )
 
     email_sent = send_otp_email(normalized_email, otp, purpose=purpose)
-    if not email_sent and not EXPOSE_DEV_OTP and email_enabled():
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
+    if not email_sent and not EXPOSE_DEV_OTP:
+        delete_otp_verifications(normalized_email, purpose)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=_otp_delivery_error_message())
 
     return {
         "message": "OTP sent to your email.",

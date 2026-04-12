@@ -9,11 +9,12 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from backend.schemas.auth import UserProfile
+from backend.services.security_settings import DEFAULT_JWT_SECRET, resolve_secret
 from backend.services.storage import get_user_by_email, get_user_by_id
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dermora-development-secret-key-2026")
+SECRET_KEY = resolve_secret("JWT_SECRET_KEY", DEFAULT_JWT_SECRET, label="JWT secret")
 security = HTTPBearer(auto_error=False)
 
 

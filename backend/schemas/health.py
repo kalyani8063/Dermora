@@ -49,4 +49,5 @@ class HealthTextRequest(BaseModel):
 class HealthLogResponse(BaseModel):
     message: str
     log: dict
+    orchestration_event: dict[str, Any] | None = None
 

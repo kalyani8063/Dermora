@@ -1,7 +1,10 @@
+import json
 import os
 import time
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from pymongo import ASCENDING, DESCENDING, MongoClient
@@ -44,8 +47,17 @@ class InMemoryCollection:
         self._documents: list[dict[str, Any]] = []
 
     @staticmethod
-    def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
-        return all(document.get(key) == value for key, value in query.items())
+    def _lookup(document: dict[str, Any], key: str):
+        value: Any = document
+        for part in key.split("."):
+            if not isinstance(value, dict):
+                return None
+            value = value.get(part)
+        return value
+
+    @classmethod
+    def _matches(cls, document: dict[str, Any], query: dict[str, Any]) -> bool:
+        return all(cls._lookup(document, key) == value for key, value in query.items())
 
     def insert_one(self, document: dict[str, Any]):
         self._documents.append(deepcopy(document))
@@ -100,17 +112,83 @@ class InMemoryCollection:
         return None
 
 
-class InMemoryDatabase:
-    def __init__(self):
-        self.users = InMemoryCollection()
-        self.analyses = InMemoryCollection()
-        self.health_logs = InMemoryCollection()
-        self.otp_verifications = InMemoryCollection()
+class PersistentFallbackCollection(InMemoryCollection):
+    def __init__(self, store: "PersistentFallbackDatabase", collection_name: str):
+        self._store = store
+        self._collection_name = collection_name
+
+    @property
+    def _documents(self) -> list[dict[str, Any]]:
+        return self._store._data.setdefault(self._collection_name, [])
+
+    @_documents.setter
+    def _documents(self, value: list[dict[str, Any]]):
+        self._store._data[self._collection_name] = value
+
+    def insert_one(self, document: dict[str, Any]):
+        self._documents.append(deepcopy(document))
+        self._store.save()
+
+    def update_one(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False):
+        result = super().update_one(query, update, upsert=upsert)
+        if result.modified_count > 0 or (upsert and result.matched_count == 0):
+            self._store.save()
+        return result
+
+    def delete_many(self, query: dict[str, Any]):
+        result = super().delete_many(query)
+        if result.deleted_count > 0:
+            self._store.save()
+        return result
+
+
+class PersistentFallbackDatabase:
+    COLLECTION_NAMES = (
+        "users",
+        "analyses",
+        "health_logs",
+        "otp_verifications",
+        "orchestration_events",
+    )
+
+    def __init__(self, storage_path: Path):
+        self._storage_path = storage_path
+        self._lock = RLock()
+        self._data = self._load()
+
+        for collection_name in self.COLLECTION_NAMES:
+            setattr(self, collection_name, PersistentFallbackCollection(self, collection_name))
+
+    def _load(self) -> dict[str, list[dict[str, Any]]]:
+        if not self._storage_path.is_file():
+            return {name: [] for name in self.COLLECTION_NAMES}
+
+        try:
+            payload = json.loads(self._storage_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {name: [] for name in self.COLLECTION_NAMES}
+
+        if not isinstance(payload, dict):
+            return {name: [] for name in self.COLLECTION_NAMES}
+
+        normalized: dict[str, list[dict[str, Any]]] = {}
+        for name in self.COLLECTION_NAMES:
+            values = payload.get(name, [])
+            normalized[name] = values if isinstance(values, list) else []
+        return normalized
+
+    def save(self):
+        with self._lock:
+            self._storage_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = self._storage_path.with_suffix(f"{self._storage_path.suffix}.tmp")
+            serialized = json.dumps(self._data, ensure_ascii=True, indent=2)
+            temp_path.write_text(serialized, encoding="utf-8")
+            temp_path.replace(self._storage_path)
 
 
 _collections = None
 _mongo_client = None
-_fallback_db = InMemoryDatabase()
+_fallback_db = PersistentFallbackDatabase(Path(__file__).resolve().parent / ".fallback_db.json")
 _indexes_ready = False
 _last_connection_error = None
 _last_attempted_uri = None
@@ -158,12 +236,29 @@ def _ensure_mongo_indexes(database):
         database.analyses.create_index([("user_id", ASCENDING), ("date", DESCENDING)])
         database.health_logs.create_index([("user_id", ASCENDING), ("date", DESCENDING)])
         database.health_logs.create_index([("user_id", ASCENDING), ("tags", ASCENDING)])
+        database.orchestration_events.create_index([("user_id", ASCENDING), ("created_at", DESCENDING)])
+        database.orchestration_events.create_index([("user_id", ASCENDING), ("status", ASCENDING)])
         database.otp_verifications.create_index([("email", ASCENDING), ("purpose", ASCENDING)], unique=True)
         database.otp_verifications.create_index("expires_at")
         _indexes_ready = True
     except Exception as error:
         message = f"Index creation warning: {error}"
         _last_connection_error = f"{_last_connection_error} | {message}" if _last_connection_error else message
+
+
+def _snapshot_mongodb_to_fallback(database):
+    snapshot = {}
+    for collection_name in PersistentFallbackDatabase.COLLECTION_NAMES:
+        collection = getattr(database, collection_name)
+        documents: list[dict[str, Any]] = []
+        for document in collection.find({}):
+            cleaned = dict(document)
+            cleaned.pop("_id", None)
+            documents.append(cleaned)
+        snapshot[collection_name] = documents
+
+    _fallback_db._data = snapshot
+    _fallback_db.save()
 
 
 def _can_skip_reconnect() -> bool:
@@ -214,11 +309,13 @@ def get_collections() -> dict[str, Any]:
             _mongo_client.admin.command("ping")
             database = _mongo_client[db_name]
             _ensure_mongo_indexes(database)
+            _snapshot_mongodb_to_fallback(database)
             _collections = {
                 "backend": "mongodb",
                 "users": database.users,
                 "analyses": database.analyses,
                 "health_logs": database.health_logs,
+                "orchestration_events": database.orchestration_events,
                 "otp_verifications": database.otp_verifications,
             }
             _last_connection_error = None
@@ -231,6 +328,7 @@ def get_collections() -> dict[str, Any]:
         "users": _fallback_db.users,
         "analyses": _fallback_db.analyses,
         "health_logs": _fallback_db.health_logs,
+        "orchestration_events": _fallback_db.orchestration_events,
         "otp_verifications": _fallback_db.otp_verifications,
     }
 
@@ -252,6 +350,19 @@ def get_database_status() -> dict[str, Any]:
         "active_uri": _last_attempted_uri,
         "retry_interval_seconds": max(_safe_int(os.getenv("MONGODB_RETRY_INTERVAL_SECONDS"), 30), 0),
         "connection_error": _last_connection_error,
+        "fallback_persistence": "disk" if collections["backend"] == "memory" else "mongodb",
+        "fallback_storage_path": str(_fallback_db._storage_path),
+    }
+
+
+def get_fallback_collections() -> dict[str, Any]:
+    return {
+        "backend": "memory",
+        "users": _fallback_db.users,
+        "analyses": _fallback_db.analyses,
+        "health_logs": _fallback_db.health_logs,
+        "orchestration_events": _fallback_db.orchestration_events,
+        "otp_verifications": _fallback_db.otp_verifications,
     }
 
 

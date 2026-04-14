@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Dashboard | Dermora</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20260411-4" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260414-1" />
     <style>
       #image-compare-grid.visual-report-grid {
         display: grid;
@@ -68,6 +68,7 @@
           grid-template-columns: minmax(0, 1fr);
         }
       }
+
     </style>
   </head>
   <body data-page="dashboard">
@@ -75,6 +76,7 @@
       <div class="nav-shell">
         <a href="/dashboard" class="nav-brand"><img src="/assets/images/logo.png" alt="Dermora logo" class="nav-logo" /><span class="nav-brand-text">Dermora</span></a>
         <nav class="nav-actions" aria-label="Primary">
+          <a href="/progress" class="button-secondary">Progress</a>
           <a href="/profile" class="button-secondary">Profile</a>
           <a href="/health-logs" class="button-secondary">Health Logs</a>
           <button id="logout-button" class="button-primary" type="button">Logout</button>
@@ -154,6 +156,35 @@
             </div>
           </article>
 
+          <article class="card dashboard-card dashboard-card-wide">
+            <div class="card-heading">
+              <p class="eyebrow">n8n Workflow</p>
+              <h3>Automation Insights</h3>
+            </div>
+            <p id="orchestration-summary" class="body-copy">Connect n8n and run onboarding, health logs, or scans to populate workflow insight summaries here.</p>
+            <p id="orchestration-updated-at" class="helper-text">Waiting for the first workflow event.</p>
+            <div class="progress-report-grid orchestration-grid">
+              <section class="progress-report-block">
+                <h4 class="progress-report-block-title">Recommendations</h4>
+                <ul id="orchestration-recommendations" class="progress-report-list">
+                  <li>Recommendations from n8n will appear here.</li>
+                </ul>
+              </section>
+              <section class="progress-report-block">
+                <h4 class="progress-report-block-title">Insights</h4>
+                <ul id="orchestration-insights" class="progress-report-list">
+                  <li>Insights and correlations will appear here.</li>
+                </ul>
+              </section>
+              <section class="progress-report-block">
+                <h4 class="progress-report-block-title">Alerts</h4>
+                <ul id="orchestration-alerts" class="progress-report-list">
+                  <li>Alerts or fallback workflow status will appear here.</li>
+                </ul>
+              </section>
+            </div>
+          </article>
+
           <article class="card dashboard-card">
             <div class="card-heading">
               <p class="eyebrow">Analysis Results</p>
@@ -221,6 +252,17 @@
 
           <article class="card dashboard-card">
             <div class="card-heading">
+              <p class="eyebrow">Progress Tracking</p>
+              <h3>Dedicated Progress Page</h3>
+            </div>
+            <p class="body-copy">Review NOW, SHORT-TERM, and LONG-TERM checkpoints on a cleaner page built for side-by-side comparison and report reading.</p>
+            <div class="dashboard-card-actions">
+              <a href="/progress" class="button-primary">Open Progress Tracker</a>
+            </div>
+          </article>
+
+          <article class="card dashboard-card">
+            <div class="card-heading">
               <p class="eyebrow">Health Logs</p>
               <h3>Dedicated Journal</h3>
             </div>
@@ -241,6 +283,6 @@
       </section>
     </main>
 
-    <script src="/assets/app.js?v=20260412-5"></script>
+    <script src="/assets/app.js?v=20260414-1"></script>
   </body>
 </html>

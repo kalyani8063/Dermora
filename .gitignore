@@ -145,6 +145,7 @@ env.bak/
 venv.bak/
 
 # Dermora generated/runtime files
+backend/.fallback_db.json
 backend/.ultralytics/
 backend/processed/
 backend/reports/

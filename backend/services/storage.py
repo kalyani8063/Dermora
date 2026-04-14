@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from pymongo import DESCENDING
 
-from backend.db import get_collections
+from backend.db import get_collections, get_fallback_collections
 
 
 KNOWN_HEALTH_PAYLOAD_FIELDS = {
@@ -99,10 +99,38 @@ def _to_bool_or_none(value):
     return None
 
 
+def _mirror_to_fallback(
+    collections: dict,
+    collection_name: str,
+    document: dict,
+    query: dict | None = None,
+    update: dict | None = None,
+    upsert: bool = False,
+    delete: bool = False,
+):
+    if collections.get("backend") != "mongodb":
+        return
+
+    fallback_collections = get_fallback_collections()
+    target = fallback_collections[collection_name]
+
+    if delete and query is not None:
+        target.delete_many(query)
+        return
+
+    if query is not None and update is not None:
+        target.update_one(query, update, upsert=upsert)
+        return
+
+    target.insert_one(_clean(document) or {})
+
+
 def create_user(user_document: dict):
     collections = get_collections()
-    collections["users"].insert_one(user_document)
-    return _clean(user_document)
+    document_to_store = deepcopy(user_document)
+    collections["users"].insert_one(document_to_store)
+    _mirror_to_fallback(collections, "users", document_to_store)
+    return _clean(document_to_store)
 
 
 def get_user_by_email(email: str):
@@ -118,29 +146,32 @@ def get_user_by_id(user_id: str):
 def update_user_fields(user_id: str, fields: dict):
     collections = get_collections()
     now_iso = datetime.now(timezone.utc).isoformat()
-    collections["users"].update_one({"user_id": user_id}, {"$set": {**fields, "updated_at": now_iso}})
+    update_payload = {"$set": {**fields, "updated_at": now_iso}}
+    collections["users"].update_one({"user_id": user_id}, update_payload)
+    _mirror_to_fallback(collections, "users", {}, query={"user_id": user_id}, update=update_payload)
     return get_user_by_id(user_id)
 
 
 def update_user_password_by_email(email: str, password_hash: str):
     collections = get_collections()
     now_iso = datetime.now(timezone.utc).isoformat()
-    collections["users"].update_one(
-        {"email": email},
-        {
-            "$set": {
-                "password_hash": password_hash,
-                "updated_at": now_iso,
-            }
-        },
-    )
+    update_payload = {
+        "$set": {
+            "password_hash": password_hash,
+            "updated_at": now_iso,
+        }
+    }
+    collections["users"].update_one({"email": email}, update_payload)
+    _mirror_to_fallback(collections, "users", {}, query={"email": email}, update=update_payload)
     return get_user_by_email(email)
 
 
 def save_analysis(analysis_document: dict):
     collections = get_collections()
-    collections["analyses"].insert_one(analysis_document)
-    return _clean(analysis_document)
+    document_to_store = deepcopy(analysis_document)
+    collections["analyses"].insert_one(document_to_store)
+    _mirror_to_fallback(collections, "analyses", document_to_store)
+    return _clean(document_to_store)
 
 
 def get_last_analysis(user_id: str):
@@ -151,6 +182,12 @@ def get_last_analysis(user_id: str):
     return None
 
 
+def get_recent_analyses(user_id: str, limit: int = 12):
+    collections = get_collections()
+    cursor = collections["analyses"].find({"user_id": user_id}).sort("date", DESCENDING).limit(limit)
+    return [_clean(document) for document in cursor]
+
+
 def get_analysis_by_report_id(user_id: str, report_id: str):
     collections = get_collections()
     return _clean(collections["analyses"].find_one({"user_id": user_id, "report.report_id": report_id}))
@@ -158,14 +195,46 @@ def get_analysis_by_report_id(user_id: str, report_id: str):
 
 def save_health_log(log_document: dict):
     collections = get_collections()
-    collections["health_logs"].insert_one(log_document)
-    return _clean(log_document)
+    document_to_store = deepcopy(log_document)
+    collections["health_logs"].insert_one(document_to_store)
+    _mirror_to_fallback(collections, "health_logs", document_to_store)
+    return _clean(document_to_store)
 
 
 def get_recent_logs(user_id: str, limit: int = 5):
     collections = get_collections()
     cursor = collections["health_logs"].find({"user_id": user_id}).sort("date", DESCENDING).limit(limit)
     return [_clean(document) for document in cursor]
+
+
+def delete_health_log(user_id: str, log_id: str) -> bool:
+    collections = get_collections()
+    query = {"user_id": user_id, "log_id": log_id}
+    delete_result = collections["health_logs"].delete_many(query)
+    _mirror_to_fallback(collections, "health_logs", {}, query=query, delete=True)
+    return bool(getattr(delete_result, "deleted_count", 0))
+
+
+def save_orchestration_event(event_document: dict):
+    collections = get_collections()
+    document_to_store = deepcopy(event_document)
+    collections["orchestration_events"].insert_one(document_to_store)
+    _mirror_to_fallback(collections, "orchestration_events", document_to_store)
+    return _clean(document_to_store)
+
+
+def get_recent_orchestration_events(user_id: str, limit: int = 6):
+    collections = get_collections()
+    cursor = collections["orchestration_events"].find({"user_id": user_id}).sort("created_at", DESCENDING).limit(limit)
+    return [_clean(document) for document in cursor]
+
+
+def get_latest_successful_orchestration_event(user_id: str):
+    collections = get_collections()
+    cursor = collections["orchestration_events"].find({"user_id": user_id, "status": "success"}).sort("created_at", DESCENDING).limit(1)
+    for document in cursor:
+        return _clean(document)
+    return None
 
 
 def build_health_log_document(user_id: str, payload: dict):
@@ -235,11 +304,10 @@ def build_health_log_document(user_id: str, payload: dict):
 
 def save_otp_verification(record: dict):
     collections = get_collections()
-    collections["otp_verifications"].update_one(
-        {"email": record["email"], "purpose": record["purpose"]},
-        {"$set": record},
-        upsert=True,
-    )
+    query = {"email": record["email"], "purpose": record["purpose"]}
+    update_payload = {"$set": record}
+    collections["otp_verifications"].update_one(query, update_payload, upsert=True)
+    _mirror_to_fallback(collections, "otp_verifications", {}, query=query, update=update_payload, upsert=True)
 
 
 def get_otp_verification(email: str, purpose: str):
@@ -250,6 +318,7 @@ def get_otp_verification(email: str, purpose: str):
 def update_otp_verification(email: str, purpose: str, update: dict):
     collections = get_collections()
     collections["otp_verifications"].update_one({"email": email, "purpose": purpose}, update)
+    _mirror_to_fallback(collections, "otp_verifications", {}, query={"email": email, "purpose": purpose}, update=update)
 
 
 def delete_otp_verifications(email: str, purpose: str | None = None):
@@ -258,4 +327,5 @@ def delete_otp_verifications(email: str, purpose: str | None = None):
     if purpose:
         query["purpose"] = purpose
     collections["otp_verifications"].delete_many(query)
+    _mirror_to_fallback(collections, "otp_verifications", {}, query=query, delete=True)
 

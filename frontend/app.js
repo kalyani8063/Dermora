@@ -48,6 +48,9 @@ const appState = {
   token: localStorage.getItem("dermora_token") || "",
   user: null,
   logs: [],
+  analysisHistory: [],
+  orchestrationLatest: null,
+  orchestrationEvents: [],
   voiceGuideAvailable: false,
   voiceGuideMessage: "",
   latestReport: null,
@@ -63,6 +66,33 @@ const appState = {
     activity_level: "",
   },
 };
+const ORCHESTRATION_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+let orchestrationRefreshTimer = null;
+let orchestrationRefreshInFlight = false;
+
+const progressStageDefinitions = [
+  {
+    key: "now",
+    label: "NOW",
+    caption: "Baseline",
+    title: "NOW",
+    description: "Starting point for this three-scan timeline.",
+  },
+  {
+    key: "short-term",
+    label: "SHORT-TERM",
+    caption: "Follow-up",
+    title: "SHORT-TERM",
+    description: "Most recent follow-up checkpoint.",
+  },
+  {
+    key: "long-term",
+    caption: "Latest Trend",
+    label: "LONG-TERM",
+    title: "LONG-TERM",
+    description: "Latest checkpoint in the current scan sequence.",
+  },
+];
 
 function byId(id) {
   return document.getElementById(id);
@@ -132,18 +162,34 @@ async function apiFetch(path, options = {}, requiresAuth = true) {
     headers,
   });
 
-  if (!response.ok) {
-    let detail = "Request failed.";
+  const rawBody = await response.text();
+  let payload = null;
+  if (rawBody) {
     try {
-      const payload = await response.json();
-      detail = payload.detail || detail;
+      payload = JSON.parse(rawBody);
     } catch (error) {
-      detail = detail;
+      payload = null;
+    }
+  }
+
+  if (!response.ok) {
+    let detail = payload?.detail || payload?.message || "";
+    if (!detail && rawBody) {
+      detail = rawBody
+        .replace(/<[^>]*>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+    if (!detail) {
+      detail = `Request failed (${response.status}${response.statusText ? ` ${response.statusText}` : ""}).`;
     }
     throw new Error(detail);
   }
 
-  return response.json();
+  if (!rawBody) {
+    return {};
+  }
+  return payload ?? rawBody;
 }
 
 async function fetchCurrentUser() {
@@ -164,6 +210,32 @@ async function fetchHealthLogs(limit = 12) {
   const query = new URLSearchParams({ limit: String(limit) });
   const payload = await apiFetch(`/health-logs-data?${query.toString()}`);
   return payload.logs || [];
+}
+
+async function deleteHealthLog(logId) {
+  if (!logId) {
+    throw new Error("Health log is missing an id.");
+  }
+  return apiFetch(`/health-logs/${encodeURIComponent(logId)}`, { method: "DELETE" });
+}
+
+async function fetchAnalysisHistory(limit = 24) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  const payload = await apiFetch(`/analysis-history?${query.toString()}`);
+  return payload.scans || [];
+}
+
+async function fetchOrchestrationSummary(limit = 6) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  const payload = await apiFetch(`/orchestration/latest?${query.toString()}`);
+  return {
+    latestSuccess: payload.latest_success || null,
+    events: payload.events || [],
+  };
+}
+
+async function recomputeOrchestrationInsights() {
+  return apiFetch("/orchestration/recompute", { method: "POST" });
 }
 
 function setReportButtonState(button, statusNode, report) {
@@ -843,6 +915,293 @@ function formatEntryDate(value) {
   });
 }
 
+function mergeOrchestrationEvent(event) {
+  if (!event?.event_id) {
+    return;
+  }
+
+  appState.orchestrationEvents = [
+    event,
+    ...appState.orchestrationEvents.filter((entry) => entry?.event_id !== event.event_id),
+  ].slice(0, 6);
+
+  if (event.status === "success") {
+    appState.orchestrationLatest = event;
+  } else if (!appState.orchestrationLatest) {
+    appState.orchestrationLatest = event;
+  }
+}
+
+function formatAnalysisDate(value) {
+  if (!value) {
+    return "Recent scan";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "Recent scan";
+  }
+
+  return parsed.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function getChronologicalAnalysisHistory(history = []) {
+  return [...history].sort((left, right) => {
+    const leftRawTime = new Date(left?.date || 0).getTime();
+    const rightRawTime = new Date(right?.date || 0).getTime();
+    const leftTime = Number.isFinite(leftRawTime) ? leftRawTime : 0;
+    const rightTime = Number.isFinite(rightRawTime) ? rightRawTime : 0;
+    return leftTime - rightTime;
+  });
+}
+
+function getProgressCheckpointImage(scan = {}) {
+  return scan.image_url || scan.processed_image_url || scan.acne_type_processed_image_url || "";
+}
+
+function buildProgressTimeline(history = []) {
+  const chronological = getChronologicalAnalysisHistory(history);
+  const uniqueScans = chronological.filter((scan, index) => {
+    const previous = chronological[index - 1];
+    if (!previous) {
+      return true;
+    }
+    return scan?.date !== previous?.date || getProgressCheckpointImage(scan) !== getProgressCheckpointImage(previous);
+  });
+  const recentSequence = uniqueScans.slice(-progressStageDefinitions.length);
+
+  return progressStageDefinitions.map((stage, index) => ({
+    ...stage,
+    scan: recentSequence[index] || null,
+  }));
+}
+
+function getTrendDirection(delta, threshold = 0) {
+  const numericDelta = Number(delta || 0);
+  if (Math.abs(numericDelta) <= threshold) {
+    return "stable";
+  }
+  return numericDelta < 0 ? "better" : "worse";
+}
+
+function buildBreakoutChangeNote(scan, previousScan = null) {
+  const acneCount = Number(scan?.acne_count || 0);
+  if (!previousScan) {
+    return `${acneCount} visible breakout${acneCount === 1 ? "" : "s"} in this scan.`;
+  }
+
+  const previousCount = Number(previousScan.acne_count || 0);
+  const delta = acneCount - previousCount;
+  const direction = getTrendDirection(delta);
+  const referenceDate = formatAnalysisDate(previousScan.date);
+
+  if (direction === "stable") {
+    return `Breakouts are unchanged from ${referenceDate}.`;
+  }
+
+  return direction === "better"
+    ? `Better than ${referenceDate}: ${Math.abs(delta)} fewer visible breakout${Math.abs(delta) === 1 ? "" : "s"}.`
+    : `Worse than ${referenceDate}: ${delta} more visible breakout${delta === 1 ? "" : "s"}.`;
+}
+
+function buildPigmentationChangeNote(scan, previousScan = null) {
+  const coverage = Number(scan?.coverage_percentage || 0);
+  const coverageLabel = formatCoverageValue(coverage);
+  const severity = String(scan?.pigmentation_severity || "Low").toLowerCase();
+
+  if (!previousScan) {
+    return `Pigmentation coverage is ${coverageLabel}% with ${severity} intensity.`;
+  }
+
+  const previousCoverage = Number(previousScan.coverage_percentage || 0);
+  const delta = Number((coverage - previousCoverage).toFixed(1));
+  const direction = getTrendDirection(delta, 0.1);
+  const referenceDate = formatAnalysisDate(previousScan.date);
+
+  if (direction === "stable") {
+    return `Pigmentation is steady versus ${referenceDate} at about ${coverageLabel}% coverage.`;
+  }
+
+  return direction === "better"
+    ? `Pigmentation improved from ${referenceDate}: ${Math.abs(delta)}% lower coverage.`
+    : `Pigmentation worsened from ${referenceDate}: ${delta}% higher coverage.`;
+}
+
+function buildOverallCheckpointNote(scan, previousScan = null) {
+  if (!scan) {
+    return "";
+  }
+  if (!previousScan) {
+    return "This is the baseline scan for the current three-checkpoint timeline.";
+  }
+
+  const breakoutDirection = getTrendDirection(Number(scan.acne_count || 0) - Number(previousScan.acne_count || 0));
+  const pigmentationDirection = getTrendDirection(
+    Number(scan.coverage_percentage || 0) - Number(previousScan.coverage_percentage || 0),
+    0.1,
+  );
+  const referenceDate = formatAnalysisDate(previousScan.date);
+
+  const betterSignals = [breakoutDirection, pigmentationDirection].filter((value) => value === "better").length;
+  const worseSignals = [breakoutDirection, pigmentationDirection].filter((value) => value === "worse").length;
+
+  if (betterSignals > worseSignals) {
+    return `Overall better than ${referenceDate}.`;
+  }
+  if (worseSignals > betterSignals) {
+    return `Overall worse than ${referenceDate}.`;
+  }
+  return `Overall similar to ${referenceDate}.`;
+}
+
+function buildCheckpointTransitionNote(previousScan, currentScan) {
+  if (!previousScan || !currentScan) {
+    return "Add another scan to unlock comparison notes.";
+  }
+
+  return `${formatAnalysisDate(previousScan.date)} to ${formatAnalysisDate(currentScan.date)}: ${buildOverallCheckpointNote(currentScan, previousScan)} ${buildBreakoutChangeNote(currentScan, previousScan)} ${buildPigmentationChangeNote(currentScan, previousScan)}`;
+}
+
+function buildLongRangeAssessment(firstScan, latestScan) {
+  if (!firstScan || !latestScan) {
+    return "Add more scans to unlock long-range trend tracking.";
+  }
+
+  const breakoutNote = buildBreakoutChangeNote(latestScan, firstScan);
+  const pigmentationNote = buildPigmentationChangeNote(latestScan, firstScan);
+  return `${formatAnalysisDate(firstScan.date)} to ${formatAnalysisDate(latestScan.date)}: ${buildOverallCheckpointNote(latestScan, firstScan)} ${breakoutNote} ${pigmentationNote}`;
+}
+
+function getActiveZones(zoneCounts = {}, limit = 2) {
+  return Object.entries(zoneCounts)
+    .map(([zoneName, count]) => ({
+      zoneName,
+      count: Number(count || 0),
+    }))
+    .filter((entry) => entry.count > 0)
+    .sort((left, right) => right.count - left.count)
+    .slice(0, limit);
+}
+
+function buildZoneActivitySummary(zoneCounts = {}) {
+  const activeZones = getActiveZones(zoneCounts);
+
+  if (activeZones.length === 0) {
+    return "No high-activity facial zone stood out in this scan.";
+  }
+
+  const labels = activeZones.map((entry) => `${formatZoneName(entry.zoneName)} (${entry.count})`);
+  return `Most active area${labels.length === 1 ? "" : "s"}: ${labels.join(", ")}.`;
+}
+
+function buildZoneFocusSummary(zoneCounts = {}) {
+  const activeZones = getActiveZones(zoneCounts);
+  if (activeZones.length === 0) {
+    return "Focus zones are minimal.";
+  }
+
+  return `Focus zones: ${activeZones.map((entry) => formatZoneName(entry.zoneName)).join(", ")}.`;
+}
+
+function buildAcneTypeMixSummary(counts = {}) {
+  const parts = [
+    ["comedonal", Number(counts.comedonal || 0)],
+    ["inflammatory", Number(counts.inflammatory || 0)],
+    ["other", Number(counts.other || 0)],
+  ].filter(([, count]) => count > 0);
+
+  if (parts.length === 0) {
+    return "Acne subtypes were not strongly separated in this scan.";
+  }
+
+  return `Subtype mix: ${parts.map(([label, count]) => `${count} ${label}`).join(", ")}.`;
+}
+
+function formatCoverageValue(value) {
+  const coverage = Number(value || 0);
+  if (!Number.isFinite(coverage)) {
+    return "0";
+  }
+  return Number.isInteger(coverage) ? String(coverage) : coverage.toFixed(1).replace(/\.0$/, "");
+}
+
+function buildProgressHighlights(scan, stage, previousScan = null) {
+  if (!scan) {
+    return [stage.description];
+  }
+
+  const highlights = [
+    `${formatAnalysisDate(scan.date)}. ${buildOverallCheckpointNote(scan, previousScan)}`,
+    buildBreakoutChangeNote(scan, previousScan),
+    `${buildPigmentationChangeNote(scan, previousScan)} ${buildZoneFocusSummary(scan.zone_counts || {})}`,
+  ];
+
+  return highlights.slice(0, 3);
+}
+
+function buildProgressTrendSummary(currentScan, baselineScan) {
+  if (!currentScan || !baselineScan) {
+    return "Add more scans to unlock trend tracking across checkpoints.";
+  }
+  return buildLongRangeAssessment(baselineScan, currentScan);
+}
+
+function buildDetailedSkinReportContent(history = []) {
+  const chronological = getChronologicalAnalysisHistory(history);
+  const timelineScans = chronological.slice(-progressStageDefinitions.length);
+  const baselineScan = timelineScans[0] || null;
+  const midpointScan = timelineScans.length > 2 ? timelineScans[1] : null;
+  const currentScan = timelineScans[timelineScans.length - 1] || null;
+  const priorScan = timelineScans.length > 1 ? timelineScans[timelineScans.length - 2] : null;
+
+  if (!currentScan) {
+    return {
+      summary: ["Save a scan to generate a structured skin progress report."],
+      observations: ["The report will summarize active lesions, pigmentation, and zone activity."],
+      progressNotes: ["Progress notes appear once at least two checkpoints exist."],
+    };
+  }
+
+  const currentSeverity = String(currentScan.pigmentation_severity || "Low").toLowerCase();
+  const currentCoverage = formatCoverageValue(currentScan.coverage_percentage);
+  const currentZones = buildZoneActivitySummary(currentScan.zone_counts || {});
+  const subtypeLine = currentScan.acne_type_available
+    ? buildAcneTypeMixSummary(currentScan.acne_type_counts || {})
+    : "Acne subtype breakdown is not available for this checkpoint.";
+  const timelineDates = timelineScans.map((scan) => formatAnalysisDate(scan.date)).join(" -> ");
+
+  const summary = [
+    `Current three-scan timeline: ${timelineDates || formatAnalysisDate(currentScan.date)}.`,
+    `Latest checkpoint from ${formatAnalysisDate(currentScan.date)} shows ${Number(currentScan.acne_count || 0)} visible breakout${Number(currentScan.acne_count || 0) === 1 ? "" : "s"}.`,
+    `Pigmentation is ${currentSeverity} with about ${currentCoverage}% coverage.`,
+    currentZones,
+  ];
+
+  const observations = [
+    subtypeLine,
+    currentScan.face_detected
+      ? `Facial landmark mapping completed successfully for ${formatAnalysisDate(currentScan.date)}.`
+      : `Facial landmark mapping was limited on ${formatAnalysisDate(currentScan.date)}.`,
+    priorScan
+      ? buildCheckpointTransitionNote(priorScan, currentScan)
+      : "Add a second scan to unlock short-term observation notes.",
+  ];
+
+  const progressNotes = [
+    buildProgressTrendSummary(currentScan, baselineScan),
+    midpointScan
+      ? buildCheckpointTransitionNote(baselineScan, midpointScan)
+      : "Add a middle checkpoint to compare the first and latest scans more clearly.",
+    `Saved checkpoints available: ${chronological.length}. The progress page is showing the latest ${timelineScans.length} scan${timelineScans.length === 1 ? "" : "s"} in sequence.`,
+  ];
+
+  return { summary, observations, progressNotes };
+}
+
 const sugarFreePositivePatterns = [
   /sugar[ -]?free/i,
   /no added sugar/i,
@@ -1162,8 +1521,22 @@ function renderRecentLogs(target) {
     savedAt.className = "log-date-pill";
     savedAt.textContent = log.date ? new Date(log.date).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "Saved now";
 
+    const headActions = document.createElement("div");
+    headActions.className = "log-head-actions";
+    headActions.appendChild(savedAt);
+
+    if (log.log_id) {
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "log-delete-button";
+      deleteButton.textContent = "Delete";
+      deleteButton.dataset.logDelete = log.log_id;
+      deleteButton.setAttribute("aria-label", `Delete health log from ${formatEntryDate(getLogEntryDate(log))}`);
+      headActions.appendChild(deleteButton);
+    }
+
     head.appendChild(time);
-    head.appendChild(savedAt);
+    head.appendChild(headActions);
 
     const details = document.createElement("span");
     details.className = "log-supporting";
@@ -1225,9 +1598,15 @@ function renderRecentLogs(target) {
 
 function bindLogout(button) {
   button?.addEventListener("click", () => {
+    if (orchestrationRefreshTimer) {
+      window.clearInterval(orchestrationRefreshTimer);
+      orchestrationRefreshTimer = null;
+    }
     persistToken("");
     appState.user = null;
     appState.logs = [];
+    appState.orchestrationLatest = null;
+    appState.orchestrationEvents = [];
     redirectTo("/");
   });
 }
@@ -1476,6 +1855,40 @@ function bindHealthLogForms() {
   syncMenstrualVisibility();
   renderRecentLogs(recentLogs);
 
+  recentLogs?.addEventListener("click", async (event) => {
+    const deleteButton = event.target.closest("[data-log-delete]");
+    if (!deleteButton) {
+      return;
+    }
+
+    const logId = deleteButton.dataset.logDelete || "";
+    const targetLog = appState.logs.find((entry) => entry.log_id === logId);
+    if (!logId || !targetLog) {
+      setMessage(healthStatus, "That log could not be found.", "error");
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete the health log for ${formatEntryDate(getLogEntryDate(targetLog))}?`);
+    if (!confirmed) {
+      return;
+    }
+
+    deleteButton.disabled = true;
+    deleteButton.textContent = "Deleting...";
+    setMessage(healthStatus, "Deleting health log...", "info");
+
+    try {
+      const data = await deleteHealthLog(logId);
+      appState.logs = appState.logs.filter((entry) => entry.log_id !== logId);
+      renderRecentLogs(recentLogs);
+      setMessage(healthStatus, data.message || "Health log deleted.", "success");
+    } catch (error) {
+      deleteButton.disabled = false;
+      deleteButton.textContent = "Delete";
+      setMessage(healthStatus, error.message || "Could not delete health log.", "error");
+    }
+  });
+
   healthLogForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     setButtonLoading(healthSubmit, true, "Saving...");
@@ -1711,9 +2124,19 @@ async function submitOnboarding(skipped = false) {
     );
 
     appState.user = payload.user;
+    if (payload.orchestration_event?.event_id) {
+      appState.orchestrationEvents = [
+        payload.orchestration_event,
+        ...appState.orchestrationEvents.filter((event) => event?.event_id !== payload.orchestration_event.event_id),
+      ].slice(0, 6);
+      if (payload.orchestration_event.status === "success") {
+        appState.orchestrationLatest = payload.orchestration_event;
+      }
+    }
     renderUserProfile();
     overlay?.classList.add("hidden");
     document.body.classList.remove("onboarding-open");
+    window.dispatchEvent(new Event("dermora:refresh-orchestration"));
   } catch (error) {
     setMessage(statusNode, error.message || "Could not save onboarding responses.", "error");
     setButtonLoading(nextButton, false, "Saving...");
@@ -1822,6 +2245,14 @@ function bindDashboardEvents() {
   const originalImage = byId("original-image");
   const detectionCanvas = byId("detection-canvas");
   const overlayViewLabel = byId("overlay-view-label");
+  const orchestrationSummary = byId("orchestration-summary");
+  const orchestrationUpdatedAt = byId("orchestration-updated-at");
+  const orchestrationRecommendations = byId("orchestration-recommendations");
+  const orchestrationInsights = byId("orchestration-insights");
+  const orchestrationAlerts = byId("orchestration-alerts");
+  const progressTrackerGrid = byId("progress-tracker-grid");
+  const progressTrackerStatus = byId("progress-tracker-status");
+  const progressDetailedReport = byId("progress-detailed-report");
   const defaultUploadCaption = "Use even lighting and keep your face centered. You can add photos from your gallery or camera.";
   let selectedImages = [];
   let cameraStream = null;
@@ -1850,6 +2281,155 @@ function bindDashboardEvents() {
 
   function getAnalysisViewLabel(viewMode) {
     return analysisViewLabels[viewMode] || analysisViewLabels.all;
+  }
+
+  function renderOrchestrationList(target, items, emptyMessage) {
+    if (!target) {
+      return;
+    }
+
+    target.innerHTML = "";
+    const normalizedItems = Array.isArray(items)
+      ? items.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    const values = normalizedItems.length > 0 ? normalizedItems : [emptyMessage];
+
+    values.forEach((item) => {
+      const listItem = document.createElement("li");
+      listItem.textContent = item;
+      target.appendChild(listItem);
+    });
+  }
+
+  function formatSourceEventLabel(sourceEvent = "") {
+    return String(sourceEvent || "workflow_event")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (match) => match.toUpperCase());
+  }
+
+  function getPreferredOrchestrationEvent(fallbackEvent = null) {
+    if (fallbackEvent?.event_id) {
+      return fallbackEvent;
+    }
+
+    if (appState.orchestrationEvents.length > 0) {
+      return appState.orchestrationEvents[0];
+    }
+
+    return appState.orchestrationLatest || null;
+  }
+
+  function renderOrchestrationPanel(preferredEvent = null) {
+    const event = getPreferredOrchestrationEvent(preferredEvent);
+
+    if (!event) {
+      if (orchestrationSummary) {
+        orchestrationSummary.textContent = "Connect n8n and run onboarding, health logs, or scans to populate workflow insight summaries here.";
+      }
+      if (orchestrationUpdatedAt) {
+        orchestrationUpdatedAt.textContent = "Waiting for the first workflow event.";
+      }
+      renderOrchestrationList(orchestrationRecommendations, [], "Recommendations from n8n will appear here.");
+      renderOrchestrationList(orchestrationInsights, [], "Insights and correlations will appear here.");
+      renderOrchestrationList(orchestrationAlerts, [], "Alerts or fallback workflow status will appear here.");
+      return;
+    }
+
+    const sourceLabel = formatSourceEventLabel(event.source_event);
+    const statusLabel = String(event.status || "pending").toLowerCase();
+    const createdAt = event.created_at ? new Date(event.created_at) : null;
+    const hasValidDate = createdAt && !Number.isNaN(createdAt.getTime());
+    const updatedLabel = hasValidDate
+      ? createdAt.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+      : "recently";
+    const summaryText = event.summary
+      || (statusLabel === "success"
+        ? `${sourceLabel} completed successfully.`
+        : event.error_message || `${sourceLabel} did not return a summary.`);
+
+    if (orchestrationSummary) {
+      orchestrationSummary.textContent = summaryText;
+    }
+    if (orchestrationUpdatedAt) {
+      orchestrationUpdatedAt.textContent = `Latest ${statusLabel} run: ${sourceLabel} on ${updatedLabel}.`;
+    }
+
+    const combinedInsights = [...(event.insights || []), ...(event.correlations || [])]
+      .map((item) => String(item || "").trim())
+      .filter((item, index, values) => item && values.indexOf(item) === index);
+    const alerts = Array.isArray(event.alerts) && event.alerts.length > 0
+      ? event.alerts
+      : [statusLabel === "success" ? "No active alerts from the latest workflow run." : event.error_message || "The latest workflow run did not complete successfully."];
+
+    renderOrchestrationList(
+      orchestrationRecommendations,
+      event.recommendations || [],
+      "No recommendations were returned by the latest workflow run.",
+    );
+    renderOrchestrationList(
+      orchestrationInsights,
+      combinedInsights,
+      "No insights or correlations were returned by the latest workflow run.",
+    );
+    renderOrchestrationList(orchestrationAlerts, alerts, "No alerts from the latest workflow run.");
+  }
+
+  async function refreshOrchestrationPanel() {
+    try {
+      const payload = await fetchOrchestrationSummary(6);
+      appState.orchestrationLatest = payload.latestSuccess;
+      appState.orchestrationEvents = payload.events;
+    } catch (error) {}
+
+    const activeEntry = appState.analysisResults[appState.activeAnalysisIndex] || null;
+    renderOrchestrationPanel(activeEntry?.data?.orchestration_event || null);
+  }
+
+  function stopAutoOrchestrationRefresh() {
+    if (orchestrationRefreshTimer) {
+      window.clearInterval(orchestrationRefreshTimer);
+      orchestrationRefreshTimer = null;
+    }
+  }
+
+  async function runAutoOrchestrationRefresh() {
+    if (orchestrationRefreshInFlight || document.hidden || !appState.token) {
+      return;
+    }
+
+    orchestrationRefreshInFlight = true;
+    try {
+      const event = await recomputeOrchestrationInsights();
+      mergeOrchestrationEvent(event);
+      renderOrchestrationPanel();
+    } catch (error) {
+      // Ignore polling failures and keep the current insight panel state.
+    } finally {
+      orchestrationRefreshInFlight = false;
+    }
+  }
+
+  function startAutoOrchestrationRefresh() {
+    stopAutoOrchestrationRefresh();
+    if (!appState.token) {
+      return;
+    }
+
+    orchestrationRefreshTimer = window.setInterval(() => {
+      void runAutoOrchestrationRefresh();
+    }, ORCHESTRATION_REFRESH_INTERVAL_MS);
+
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) {
+        void runAutoOrchestrationRefresh();
+      }
+    });
   }
 
   function updateAnalysisViewButtons() {
@@ -2358,6 +2938,7 @@ function bindDashboardEvents() {
     byId("boxes-count-value").textContent = regionCount || 0;
     byId("metric-boxes-count-value").textContent = regionCount || 0;
     drawDetectionPreview(entry?.previewUrl || "", data.boxes || [], data.processed_image_url || "", data, appState.analysisViewMode);
+    renderOrchestrationPanel(data.orchestration_event || null);
     setReportButtonState(downloadReportButton, reportStatus, null);
   }
 
@@ -2376,7 +2957,135 @@ function bindDashboardEvents() {
     byId("boxes-count-value").textContent = "--";
     byId("metric-acne-count-value").textContent = "--";
     byId("metric-boxes-count-value").textContent = "--";
+    renderOrchestrationPanel();
     setReportButtonState(downloadReportButton, reportStatus, null);
+  }
+
+  function renderProgressTracker() {
+    if (!progressTrackerGrid) {
+      return;
+    }
+
+    const stages = buildProgressTimeline(appState.analysisHistory);
+    const populatedStages = stages.filter((stage) => Boolean(stage.scan)).length;
+
+    progressTrackerGrid.innerHTML = "";
+
+    if (progressTrackerStatus) {
+      progressTrackerStatus.textContent = populatedStages === 0
+        ? "Complete a scan to start the three-checkpoint progress timeline."
+        : populatedStages < progressStageDefinitions.length
+          ? `Showing ${populatedStages} saved checkpoint${populatedStages === 1 ? "" : "s"}. Add more scans to complete the NOW / SHORT-TERM / LONG-TERM comparison.`
+          : "Compare the three checkpoints side by side to review baseline, improvement, and long-range trend.";
+    }
+
+    stages.forEach((stage, index) => {
+      const card = document.createElement("article");
+      const stageKeyClass = `stage-${stage.key}`;
+      card.className = `progress-stage-card ${stageKeyClass}${stage.scan ? "" : " is-empty"}`;
+
+      const header = document.createElement("div");
+      header.className = "progress-stage-header";
+
+      const title = document.createElement("h4");
+      title.className = "progress-stage-title";
+      title.textContent = stage.title;
+
+      const chip = document.createElement("span");
+      chip.className = "progress-stage-badge";
+      chip.textContent = stage.caption;
+
+      const dateLabel = document.createElement("span");
+      dateLabel.className = "progress-stage-date";
+      dateLabel.textContent = stage.scan ? formatAnalysisDate(stage.scan.date) : "Awaiting scan";
+
+      header.append(title, chip, dateLabel);
+
+      const frame = document.createElement("div");
+      frame.className = "progress-stage-frame";
+
+      const checkpointImageUrl = getProgressCheckpointImage(stage.scan || {});
+      if (checkpointImageUrl) {
+        const image = document.createElement("img");
+        image.src = checkpointImageUrl;
+        image.alt = `${stage.label} facial scan`;
+        frame.appendChild(image);
+      } else {
+        const placeholder = document.createElement("div");
+        placeholder.className = "progress-stage-placeholder";
+        placeholder.textContent = "Scan photo will appear here.";
+        frame.appendChild(placeholder);
+      }
+
+      const bulletList = document.createElement("ul");
+      bulletList.className = "progress-stage-points";
+      const previousScan = index > 0 ? stages[index - 1]?.scan || null : null;
+      buildProgressHighlights(stage.scan, stage, previousScan).forEach((highlight) => {
+        const item = document.createElement("li");
+        item.textContent = highlight;
+        bulletList.appendChild(item);
+      });
+
+      card.append(header, frame, bulletList);
+      progressTrackerGrid.appendChild(card);
+    });
+
+    renderDetailedSkinReport();
+  }
+
+  function renderDetailedSkinReport() {
+    if (!progressDetailedReport) {
+      return;
+    }
+
+    const report = buildDetailedSkinReportContent(appState.analysisHistory);
+    progressDetailedReport.innerHTML = "";
+
+    const reportHeader = document.createElement("div");
+    reportHeader.className = "progress-report-header";
+
+    const reportEyebrow = document.createElement("p");
+    reportEyebrow.className = "eyebrow";
+    reportEyebrow.textContent = "Detailed Skin Report";
+
+    const reportTitle = document.createElement("h4");
+    reportTitle.className = "progress-report-title";
+    reportTitle.textContent = "Clinical-style summary for the current timeline";
+
+    const reportBodyText = document.createElement("p");
+    reportBodyText.className = "helper-text";
+    reportBodyText.textContent = "Review the current condition, key observations, and progress notes from the saved checkpoints.";
+
+    reportHeader.append(reportEyebrow, reportTitle, reportBodyText);
+
+    const reportGrid = document.createElement("div");
+    reportGrid.className = "progress-report-grid";
+
+    [
+      { title: "Current Condition Summary", items: report.summary },
+      { title: "Observations", items: report.observations },
+      { title: "Progress Notes", items: report.progressNotes },
+    ].forEach((section) => {
+      const block = document.createElement("section");
+      block.className = "progress-report-block";
+
+      const heading = document.createElement("h5");
+      heading.className = "progress-report-block-title";
+      heading.textContent = section.title;
+
+      const list = document.createElement("ul");
+      list.className = "progress-report-list";
+      section.items.forEach((item) => {
+        const listItem = document.createElement("li");
+        listItem.textContent = item;
+        list.appendChild(listItem);
+      });
+
+      block.append(heading, list);
+      reportGrid.appendChild(block);
+    });
+
+    progressDetailedReport.append(reportHeader, reportGrid);
   }
 
   function updateVoiceGuideForAnalysis(data, shouldSpeak = false) {
@@ -2639,6 +3348,8 @@ function bindDashboardEvents() {
   updateAnalysisViewButtons();
   renderSelectionList();
   renderAnalysisGallery();
+  renderProgressTracker();
+  renderOrchestrationPanel();
   updateUploadCaption();
   updateAnalyzeButtonState();
 
@@ -2661,6 +3372,7 @@ function bindDashboardEvents() {
       renderActiveAnalysis(activeEntry);
     }
   });
+  window.addEventListener("dermora:refresh-orchestration", refreshOrchestrationPanel);
 
   imageInput?.addEventListener("change", () => {
     const files = Array.from(imageInput.files || []);
@@ -2809,6 +3521,11 @@ function bindDashboardEvents() {
       renderActiveAnalysis(completed[0]);
       renderAnalysisGallery();
       updateVoiceGuideForAnalysis(completed[0].data, true);
+      try {
+        appState.analysisHistory = await fetchAnalysisHistory(24);
+      } catch (historyError) {}
+      await refreshOrchestrationPanel();
+      renderProgressTracker();
 
       if (analysisBatchStatus) {
         analysisBatchStatus.textContent = completed.length === 1
@@ -2855,6 +3572,7 @@ function bindDashboardEvents() {
       appState.logs.unshift(data.log);
       appState.logs = appState.logs.slice(0, 120);
       renderSugarFreeStreak();
+      await refreshOrchestrationPanel();
       setMessage(sugarStatus, sugarFree ? "Sugar-free today recorded. Streak continued." : "Sugar intake recorded. Streak broken for today.", "success");
     } catch (error) {
       setMessage(sugarStatus, error.message || "Could not save today's sugar status.", "error");
@@ -2877,6 +3595,8 @@ function bindDashboardEvents() {
   sugarBreakButton?.addEventListener("click", async () => {
     await saveDashboardSugarCheckin(false);
   });
+  void runAutoOrchestrationRefresh();
+  startAutoOrchestrationRefresh();
 }
 
 async function initDashboardPage() {
@@ -2894,8 +3614,174 @@ async function initDashboardPage() {
     appState.logs = [];
   }
 
+  try {
+    appState.analysisHistory = await fetchAnalysisHistory(24);
+  } catch (error) {
+    appState.analysisHistory = [];
+  }
+
+  try {
+    const payload = await fetchOrchestrationSummary(6);
+    appState.orchestrationLatest = payload.latestSuccess;
+    appState.orchestrationEvents = payload.events;
+  } catch (error) {
+    appState.orchestrationLatest = null;
+    appState.orchestrationEvents = [];
+  }
+
   bindDashboardEvents();
   maybeInitOnboardingQuiz();
+}
+
+async function initProgressPage() {
+  const user = await fetchCurrentUser();
+  if (!user) {
+    redirectTo("/login");
+    return;
+  }
+
+  appState.user = user;
+
+  try {
+    appState.analysisHistory = await fetchAnalysisHistory(24);
+  } catch (error) {
+    appState.analysisHistory = [];
+  }
+
+  renderUserProfile();
+  bindLogout(byId("logout-button"));
+
+  const progressTrackerGrid = byId("progress-tracker-grid");
+  const progressTrackerStatus = byId("progress-tracker-status");
+  const progressDetailedReport = byId("progress-detailed-report");
+
+  function renderDetailedSkinReportPage() {
+    if (!progressDetailedReport) {
+      return;
+    }
+
+    const report = buildDetailedSkinReportContent(appState.analysisHistory);
+    progressDetailedReport.innerHTML = "";
+
+    const reportHeader = document.createElement("div");
+    reportHeader.className = "progress-report-header";
+
+    const reportEyebrow = document.createElement("p");
+    reportEyebrow.className = "eyebrow";
+    reportEyebrow.textContent = "Detailed Skin Report";
+
+    const reportTitle = document.createElement("h4");
+    reportTitle.className = "progress-report-title";
+    reportTitle.textContent = "Clinical-style summary for the current timeline";
+
+    const reportBodyText = document.createElement("p");
+    reportBodyText.className = "helper-text";
+    reportBodyText.textContent = "Review the current condition, key observations, and progress notes from the saved checkpoints.";
+
+    reportHeader.append(reportEyebrow, reportTitle, reportBodyText);
+
+    const reportGrid = document.createElement("div");
+    reportGrid.className = "progress-report-grid";
+
+    [
+      { title: "Current Condition Summary", items: report.summary },
+      { title: "Observations", items: report.observations },
+      { title: "Progress Notes", items: report.progressNotes },
+    ].forEach((section) => {
+      const block = document.createElement("section");
+      block.className = "progress-report-block";
+
+      const heading = document.createElement("h5");
+      heading.className = "progress-report-block-title";
+      heading.textContent = section.title;
+
+      const list = document.createElement("ul");
+      list.className = "progress-report-list";
+      section.items.forEach((item) => {
+        const listItem = document.createElement("li");
+        listItem.textContent = item;
+        list.appendChild(listItem);
+      });
+
+      block.append(heading, list);
+      reportGrid.appendChild(block);
+    });
+
+    progressDetailedReport.append(reportHeader, reportGrid);
+  }
+
+  function renderProgressPageTimeline() {
+    if (!progressTrackerGrid) {
+      return;
+    }
+
+    const stages = buildProgressTimeline(appState.analysisHistory);
+    const populatedStages = stages.filter((stage) => Boolean(stage.scan)).length;
+    progressTrackerGrid.innerHTML = "";
+
+    if (progressTrackerStatus) {
+      progressTrackerStatus.textContent = populatedStages === 0
+        ? "Complete a scan to start the three-checkpoint progress timeline."
+        : populatedStages < progressStageDefinitions.length
+          ? `Showing ${populatedStages} saved checkpoint${populatedStages === 1 ? "" : "s"}. Add more scans to complete the NOW / SHORT-TERM / LONG-TERM comparison.`
+          : "Compare the three checkpoints side by side to review baseline, improvement, and long-range trend.";
+    }
+
+    stages.forEach((stage, index) => {
+      const card = document.createElement("article");
+      const stageKeyClass = `stage-${stage.key}`;
+      card.className = `progress-stage-card ${stageKeyClass}${stage.scan ? "" : " is-empty"}`;
+
+      const header = document.createElement("div");
+      header.className = "progress-stage-header";
+
+      const title = document.createElement("h4");
+      title.className = "progress-stage-title";
+      title.textContent = stage.title;
+
+      const chip = document.createElement("span");
+      chip.className = "progress-stage-badge";
+      chip.textContent = stage.caption;
+
+      const dateLabel = document.createElement("span");
+      dateLabel.className = "progress-stage-date";
+      dateLabel.textContent = stage.scan ? formatAnalysisDate(stage.scan.date) : "Awaiting scan";
+
+      header.append(title, chip, dateLabel);
+
+      const frame = document.createElement("div");
+      frame.className = "progress-stage-frame";
+
+      const checkpointImageUrl = getProgressCheckpointImage(stage.scan || {});
+      if (checkpointImageUrl) {
+        const image = document.createElement("img");
+        image.src = checkpointImageUrl;
+        image.alt = `${stage.label} facial scan`;
+        frame.appendChild(image);
+      } else {
+        const placeholder = document.createElement("div");
+        placeholder.className = "progress-stage-placeholder";
+        placeholder.textContent = "Scan photo will appear here.";
+        frame.appendChild(placeholder);
+      }
+
+      const bulletList = document.createElement("ul");
+      bulletList.className = "progress-stage-points";
+      const previousScan = index > 0 ? stages[index - 1]?.scan || null : null;
+      buildProgressHighlights(stage.scan, stage, previousScan).forEach((highlight) => {
+        const item = document.createElement("li");
+        item.textContent = highlight;
+        bulletList.appendChild(item);
+      });
+
+      card.append(header, frame, bulletList);
+      progressTrackerGrid.appendChild(card);
+    });
+
+    renderDetailedSkinReportPage();
+  }
+
+  renderProgressPageTimeline();
 }
 
 async function initProfilePage() {
@@ -3025,6 +3911,11 @@ async function bootstrap() {
 
   if (page === "profile") {
     await initProfilePage();
+    return;
+  }
+
+  if (page === "progress") {
+    await initProgressPage();
     return;
   }
 

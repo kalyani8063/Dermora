@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -47,3 +51,36 @@ class AnalysisResponse(BaseModel):
     acne_type_processed_image_url: str | None = None
     acne_type_detections: list[AcneTypeDetection] = Field(default_factory=list)
     acne_type_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class AnalyzeResultResponse(AnalysisResponse):
+    orchestration_event: OrchestrationEventResponse | None = None
+
+
+class AnalysisHistoryItem(AnalysisResponse):
+    date: str
+    image_url: str
+
+
+class AnalysisHistoryResponse(BaseModel):
+    scans: list[AnalysisHistoryItem] = Field(default_factory=list)
+
+
+class OrchestrationEventResponse(BaseModel):
+    event_id: str
+    source_event: str
+    status: str
+    created_at: str
+    attempts: int = 0
+    summary: str = ""
+    error_message: str = ""
+    insights: list[str] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+    correlations: list[str] = Field(default_factory=list)
+    alerts: list[str] = Field(default_factory=list)
+    response_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class OrchestrationLatestResponse(BaseModel):
+    latest_success: OrchestrationEventResponse | None = None
+    events: list[OrchestrationEventResponse] = Field(default_factory=list)

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Progress Tracking | Dermora</title>
+    <link rel="stylesheet" href="/assets/styles.css?v=20260414-1" />
+  </head>
+  <body data-page="progress">
+    <header class="site-header site-header-solid">
+      <div class="nav-shell">
+        <a href="/dashboard" class="nav-brand"><img src="/assets/images/logo.png" alt="Dermora logo" class="nav-logo" /><span class="nav-brand-text">Dermora</span></a>
+        <nav class="nav-actions" aria-label="Primary">
+          <a href="/dashboard" class="button-secondary">Dashboard</a>
+          <a href="/health-logs" class="button-secondary">Health Logs</a>
+          <a href="/profile" class="button-secondary">Profile</a>
+          <button id="logout-button" class="button-primary" type="button">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="page-shell dashboard-main">
+      <section class="dashboard-shell progress-page-layout">
+        <div class="card dashboard-header-card progress-hero-card">
+          <div class="dashboard-header-content">
+            <div>
+              <p class="eyebrow">Progress Tracking</p>
+              <h1 class="dashboard-title">Skin progress timeline for <span id="user-name">User</span></h1>
+              <p id="user-meta" class="body-copy compact-copy"></p>
+              <p class="helper-text">Compare baseline, short-term movement, and long-term outcome in one dedicated medical-style review page.</p>
+            </div>
+            <div class="progress-hero-actions">
+              <a href="/dashboard" class="button-primary">Run New Scan</a>
+              <a href="/dashboard" class="button-secondary">Back to Dashboard</a>
+            </div>
+          </div>
+        </div>
+
+        <article class="card dashboard-card dashboard-card-wide progress-page-card">
+          <div class="card-heading">
+            <p class="eyebrow">Checkpoint Comparison</p>
+            <h3>Acne Progress Tracking</h3>
+          </div>
+          <p id="progress-tracker-status" class="helper-text">Complete a scan to start the three-checkpoint progress timeline.</p>
+          <div id="progress-tracker-grid" class="progress-stage-grid">
+            <p class="selection-empty">Your NOW, SHORT-TERM, and LONG-TERM scans will appear here with condition notes.</p>
+          </div>
+          <div id="progress-detailed-report" class="progress-report-panel">
+            <p class="selection-empty">Detailed Skin Report will appear here after your first saved scan.</p>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script src="/assets/app.js?v=20260414-1"></script>
+  </body>
+</html>

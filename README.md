@@ -7,6 +7,9 @@ The project uses a FastAPI backend, a lightweight mobile-friendly frontend, Mong
 - a region detector for broader facial concern areas
 - an acne-type detector for lesion-level classification
 
+
+![DDR-AI Architecture](frontend/images/dashboard.png)
+
 ## Core Capabilities
 
 - Secure user registration with email OTP verification
@@ -27,6 +30,7 @@ The project uses a FastAPI backend, a lightweight mobile-friendly frontend, Mong
   - Facial Mesh
   - Hyperpigmentation Zones
 - Camera capture and image upload from the dashboard
+- n8n workflow orchestration hooks for onboarding, health logs, text logs, and completed skin analyses
 - MongoDB persistence with automatic fallback to an in-memory store for development continuity
 
 ## Architecture
@@ -43,6 +47,7 @@ Dermora is organized as a simple frontend + API backend application.
 
 - FastAPI application serving both API endpoints and frontend pages
 - Modular services for authentication, OTP, email, storage, NLP parsing, ML inference, and face analysis
+- Optional n8n webhook orchestration for downstream automation and recommendation workflows
 - Pydantic schemas for request and response validation
 
 ### Data and Inference Flow
@@ -163,6 +168,26 @@ Notes:
 - Set it to `false` once real email delivery is working.
 - Never commit your real `.env`.
 
+### n8n Workflow Automation
+
+Optional keys:
+
+```env
+N8N_ENABLED=true
+N8N_WEBHOOK_URL=https://your-n8n-host/webhook/dermora
+N8N_AUTH_HEADER=Bearer your-shared-secret
+N8N_AUTH_HEADER_NAME=Authorization
+N8N_TIMEOUT_SECONDS=10
+N8N_RETRY_ATTEMPTS=3
+```
+
+Notes:
+
+- Dermora sends sanitized orchestration payloads to n8n after onboarding, health log submission, text log parsing, and completed image analysis.
+- If `N8N_ENABLED=false`, the main product flow still works and the orchestration event is stored as disabled.
+- `N8N_AUTH_HEADER` supports either a full header value like `Bearer token` or `Header-Name: value`.
+- Recent workflow results are available from `GET /orchestration/latest`.
+
 ### MongoDB
 
 Supported variables:
@@ -177,7 +202,7 @@ Supported variables:
 - `MONGODB_SOCKET_TIMEOUT_MS`
 - `MONGODB_RETRY_INTERVAL_SECONDS`
 
-Dermora automatically falls back to an in-memory datastore if MongoDB is unavailable, which keeps local development unblocked.
+Dermora automatically falls back to a local disk-backed datastore if MongoDB is unavailable, which keeps local development unblocked and preserves users/logs across app restarts.
 
 You can inspect the active backend with:
 
@@ -258,6 +283,7 @@ In the current pipeline:
 - `POST /log-health`
 - `POST /log-text`
 - `POST /analyze`
+- `GET /orchestration/latest`
 - `GET /reports/{report_id}`
 
 ### Frontend Pages

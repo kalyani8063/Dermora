@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 import os
 import time
 from copy import deepcopy
@@ -176,12 +177,18 @@ class PersistentFallbackDatabase:
             values = payload.get(name, [])
             normalized[name] = values if isinstance(values, list) else []
         return normalized
+    
+    def _json_serial(self, obj):
+        """JSON serializer for objects not serializable by default json code"""
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
     def save(self):
         with self._lock:
             self._storage_path.parent.mkdir(parents=True, exist_ok=True)
             temp_path = self._storage_path.with_suffix(f"{self._storage_path.suffix}.tmp")
-            serialized = json.dumps(self._data, ensure_ascii=True, indent=2)
+            serialized = json.dumps(self._data, ensure_ascii=True, indent=2, default=self._json_serial)
             temp_path.write_text(serialized, encoding="utf-8")
             temp_path.replace(self._storage_path)
 

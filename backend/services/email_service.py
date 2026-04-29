@@ -1,13 +1,16 @@
 import logging
 import os
 import smtplib
+import json
 from email.message import EmailMessage
+from urllib import error, request
 
 
 logger = logging.getLogger(__name__)
 PLACEHOLDER_EMAIL_VALUES = {
     "your-email@gmail.com",
     "your-16-digit-app-password",
+    "your-brevo-api-key",
 }
 
 
@@ -25,14 +28,68 @@ SMTP_FROM = _clean_email_setting(os.getenv("EMAIL_FROM", SMTP_USERNAME or "no-re
 SMTP_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
 SMTP_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() == "true"
 OTP_EXPIRE_MINUTES = int(os.getenv("OTP_EXPIRE_MINUTES", "5"))
+EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "auto").strip().lower()
+BREVO_API_KEY = _clean_email_setting(os.getenv("BREVO_API_KEY", ""))
+BREVO_API_URL = os.getenv("BREVO_API_URL", "https://api.brevo.com/v3/smtp/email").strip()
+EMAIL_SENDER_NAME = os.getenv("EMAIL_SENDER_NAME", "Dermora").strip() or "Dermora"
 
 
-def email_enabled() -> bool:
+def _smtp_enabled() -> bool:
     return bool(SMTP_HOST and SMTP_FROM)
 
 
-def send_email(to_email: str, subject: str, body: str) -> bool:
-    if not email_enabled():
+def _brevo_enabled() -> bool:
+    return bool(BREVO_API_KEY and SMTP_FROM)
+
+
+def email_enabled() -> bool:
+    return _smtp_enabled() or _brevo_enabled()
+
+
+def _send_via_brevo(to_email: str, subject: str, body: str) -> bool:
+    if not _brevo_enabled():
+        return False
+
+    payload = json.dumps(
+        {
+            "sender": {
+                "name": EMAIL_SENDER_NAME,
+                "email": SMTP_FROM,
+            },
+            "to": [{"email": to_email}],
+            "subject": subject,
+            "textContent": body,
+        }
+    ).encode("utf-8")
+    api_request = request.Request(
+        BREVO_API_URL,
+        data=payload,
+        method="POST",
+        headers={
+            "accept": "application/json",
+            "api-key": BREVO_API_KEY,
+            "content-type": "application/json",
+        },
+    )
+
+    try:
+        with request.urlopen(api_request, timeout=12) as response:
+            status_code = int(getattr(response, "status", 0))
+            return 200 <= status_code < 300
+    except error.HTTPError as exc:
+        try:
+            response_body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            response_body = "<unavailable>"
+        logger.exception("Brevo email request failed with status %s: %s", exc.code, response_body)
+        return False
+    except Exception:
+        logger.exception("Failed to send email to %s using Brevo API.", to_email)
+        return False
+
+
+def _send_via_smtp(to_email: str, subject: str, body: str) -> bool:
+    if not _smtp_enabled():
         return False
 
     message = EmailMessage()
@@ -59,6 +116,17 @@ def send_email(to_email: str, subject: str, body: str) -> bool:
     except Exception:
         logger.exception("Failed to send email to %s using SMTP host '%s'.", to_email, SMTP_HOST or "<unset>")
         return False
+
+
+def send_email(to_email: str, subject: str, body: str) -> bool:
+    if EMAIL_PROVIDER == "brevo":
+        return _send_via_brevo(to_email, subject, body)
+    if EMAIL_PROVIDER == "smtp":
+        return _send_via_smtp(to_email, subject, body)
+
+    if _brevo_enabled():
+        return _send_via_brevo(to_email, subject, body)
+    return _send_via_smtp(to_email, subject, body)
 
 
 def send_otp_email(email: str, otp: str, purpose: str = "verification") -> bool:

@@ -63,8 +63,8 @@ def _as_utc_datetime(value) -> datetime | None:
 
 def _otp_delivery_error_message() -> str:
     if email_enabled():
-        return "Failed to send OTP email. Check your SMTP settings and try again."
-    return "OTP email is not configured. Set SMTP variables or enable DERMORA_EXPOSE_DEV_OTP for local development."
+        return "Failed to send OTP email. Check your configured email provider and try again."
+    return "OTP email is not configured. Set a supported email provider such as Brevo, or enable DERMORA_EXPOSE_DEV_OTP for development."
 
 
 def request_otp(email: str, purpose: str) -> dict:

@@ -11,5 +11,7 @@ services:
         value: 3.11.11
       - key: JWT_SECRET_KEY
         generateValue: true
+      - key: EMAIL_PROVIDER
+        value: brevo
       - key: DERMORA_EXPOSE_DEV_OTP
-        value: "true"
+        value: "false"

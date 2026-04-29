@@ -154,7 +154,7 @@ Why this path works well:
 
 - no Docker install is required on your machine
 - Render can deploy the Python app directly from GitHub
-- a persistent disk can store model files, uploads, processed images, and reports outside the repo
+- the app can send OTP emails through Brevo's HTTPS API on free Render
 
 ### Render deployment steps
 
@@ -162,31 +162,12 @@ Why this path works well:
 2. In Render, create a new Blueprint service and point it at your GitHub repo.
 3. Render will detect `render.yaml` and create the web service plus the persistent disk configuration.
 4. Add your real environment variables in Render:
-   - `MONGODB_URI`
-   - `EMAIL_SMTP_HOST`
-   - `EMAIL_SMTP_PORT`
-   - `EMAIL_SMTP_USERNAME`
-   - `EMAIL_SMTP_PASSWORD`
+   - `MONGODB_URI` (optional but recommended)
+   - `BREVO_API_KEY`
    - `EMAIL_FROM`
+   - `EMAIL_SENDER_NAME` (optional)
 5. Deploy the service.
-6. After the first deploy, open the Render shell and copy your model files into:
-
-```text
-/opt/render/project/src/backend/runtime/models/
-```
-
-Required model files:
-
-- `best.pt`
-- `acne_type.pt`
-- `face_landmarker.task`
-
-The included `render.yaml` already points the app to these disk-backed locations:
-
-- uploads: `/opt/render/project/src/backend/runtime/uploads`
-- processed images: `/opt/render/project/src/backend/runtime/processed`
-- reports: `/opt/render/project/src/backend/runtime/reports`
-- models: `/opt/render/project/src/backend/runtime/models`
+6. In Brevo, verify the sender address used in `EMAIL_FROM`.
 
 ### Public URL
 
@@ -199,10 +180,13 @@ https://your-service-name.onrender.com
 ### Production checklist
 
 - Set a real `JWT_SECRET_KEY`
-- Configure SMTP variables if you want real OTP email delivery
+- Configure `BREVO_API_KEY` and `EMAIL_FROM` for real OTP email delivery on free Render
 - Set `DERMORA_EXPOSE_DEV_OTP=false`
 - Provide a real `MONGODB_URI` for persistent user and analysis data
-- Copy the model files onto the mounted Render disk so `/analyze` can run the detection pipeline
+
+### Why not SMTP on free Render
+
+Render free web services block outbound SMTP ports, so normal SMTP settings will not deliver OTP emails there. Using Brevo's HTTPS API avoids that limitation and still gives you real OTP mail delivery.
 
 ### Docker alternative
 

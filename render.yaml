@@ -2,29 +2,14 @@ services:
   - type: web
     name: dermora
     runtime: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health/db
-    disk:
-      name: dermora-data
-      mountPath: /opt/render/project/src/backend/runtime
-      sizeGB: 5
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.11
       - key: JWT_SECRET_KEY
         generateValue: true
       - key: DERMORA_EXPOSE_DEV_OTP
-        value: "false"
-      - key: DERMORA_UPLOAD_DIR
-        value: /opt/render/project/src/backend/runtime/uploads
-      - key: DERMORA_PROCESSED_DIR
-        value: /opt/render/project/src/backend/runtime/processed
-      - key: DERMORA_REPORT_DIR
-        value: /opt/render/project/src/backend/runtime/reports
-      - key: DERMORA_MODEL_PATH
-        value: /opt/render/project/src/backend/runtime/models/best.pt
-      - key: DERMORA_ACNE_TYPE_MODEL_PATH
-        value: /opt/render/project/src/backend/runtime/models/acne_type.pt
-      - key: DERMORA_FACE_LANDMARKER_MODEL
-        value: /opt/render/project/src/backend/runtime/models/face_landmarker.task
+        value: "true"

@@ -58,13 +58,24 @@ from backend.services.storage import (
 )
 from backend.services.workflow import process_orchestration_event
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BACKEND_DIR = Path(__file__).resolve().parent
+BASE_DIR = BACKEND_DIR.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
-UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
-PROCESSED_DIR = Path(__file__).resolve().parent / "processed"
-REPORT_DIR = Path(__file__).resolve().parent / "reports"
 LOGGER = logging.getLogger(__name__)
 UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+def _resolve_runtime_path(env_name: str, default_relative_path: str) -> Path:
+    configured_path = os.getenv(env_name, "").strip()
+    target = Path(configured_path) if configured_path else Path(default_relative_path)
+    if target.is_absolute():
+        return target
+    return BASE_DIR / target
+
+
+UPLOAD_DIR = _resolve_runtime_path("DERMORA_UPLOAD_DIR", "backend/uploads")
+PROCESSED_DIR = _resolve_runtime_path("DERMORA_PROCESSED_DIR", "backend/processed")
+REPORT_DIR = _resolve_runtime_path("DERMORA_REPORT_DIR", "backend/reports")
 
 
 def _safe_process_orchestration_event(

@@ -142,6 +142,72 @@ To run with environment variables from a local file:
 uvicorn backend.main:app --reload --env-file .env
 ```
 
+## Deployment
+
+Dermora is easiest to deploy as a single web service because the FastAPI app already serves both the frontend pages and API routes.
+
+### Recommended no-Docker path
+
+Use Render with the included `render.yaml`.
+
+Why this path works well:
+
+- no Docker install is required on your machine
+- Render can deploy the Python app directly from GitHub
+- a persistent disk can store model files, uploads, processed images, and reports outside the repo
+
+### Render deployment steps
+
+1. Push this repository to GitHub.
+2. In Render, create a new Blueprint service and point it at your GitHub repo.
+3. Render will detect `render.yaml` and create the web service plus the persistent disk configuration.
+4. Add your real environment variables in Render:
+   - `MONGODB_URI`
+   - `EMAIL_SMTP_HOST`
+   - `EMAIL_SMTP_PORT`
+   - `EMAIL_SMTP_USERNAME`
+   - `EMAIL_SMTP_PASSWORD`
+   - `EMAIL_FROM`
+5. Deploy the service.
+6. After the first deploy, open the Render shell and copy your model files into:
+
+```text
+/opt/render/project/src/backend/runtime/models/
+```
+
+Required model files:
+
+- `best.pt`
+- `acne_type.pt`
+- `face_landmarker.task`
+
+The included `render.yaml` already points the app to these disk-backed locations:
+
+- uploads: `/opt/render/project/src/backend/runtime/uploads`
+- processed images: `/opt/render/project/src/backend/runtime/processed`
+- reports: `/opt/render/project/src/backend/runtime/reports`
+- models: `/opt/render/project/src/backend/runtime/models`
+
+### Public URL
+
+If you deploy to Render as a web service, your shareable link will look like:
+
+```text
+https://your-service-name.onrender.com
+```
+
+### Production checklist
+
+- Set a real `JWT_SECRET_KEY`
+- Configure SMTP variables if you want real OTP email delivery
+- Set `DERMORA_EXPOSE_DEV_OTP=false`
+- Provide a real `MONGODB_URI` for persistent user and analysis data
+- Copy the model files onto the mounted Render disk so `/analyze` can run the detection pipeline
+
+### Docker alternative
+
+If you install Docker later, the included `Dockerfile` still works as an alternative deployment path.
+
 ## Environment Configuration
 
 Copy `.env.example` to `.env` and update values for your environment.

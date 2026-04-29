@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+.server_logs
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+backend/__pycache__
+backend/.ultralytics
+backend/uploads
+backend/processed
+backend/reports
+backend/.fallback_db.json

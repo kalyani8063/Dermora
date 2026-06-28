@@ -63,7 +63,7 @@ def _as_utc_datetime(value) -> datetime | None:
 
 def _otp_delivery_error_message() -> str:
     if email_enabled():
-        return "Failed to send OTP email. Check your configured email provider and try again."
+        return "Failed to send OTP email. Check your configured email provider (e.g., Brevo API key and sender email) and try again."
     return "OTP email is not configured. Set a supported email provider such as Brevo, or enable DERMORA_EXPOSE_DEV_OTP for development."
 
 
@@ -103,7 +103,10 @@ def request_otp(email: str, purpose: str) -> dict:
     email_sent = send_otp_email(normalized_email, otp, purpose=purpose)
     if not email_sent and not EXPOSE_DEV_OTP:
         delete_otp_verifications(normalized_email, purpose)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=_otp_delivery_error_message())
+        error_message = _otp_delivery_error_message()
+        if "Failed to send" in error_message:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=error_message)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
 
     return {
         "message": "OTP sent to your email.",

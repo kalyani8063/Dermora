@@ -15,3 +15,5 @@ services:
         value: brevo
       - key: DERMORA_EXPOSE_DEV_OTP
         value: "false"
+      - key: GEMINI_API_KEY
+        sync: false

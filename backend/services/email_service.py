@@ -17,6 +17,7 @@ PLACEHOLDER_EMAIL_VALUES = {
 def _clean_email_setting(value: str) -> str:
     cleaned = value.strip()
     if cleaned in PLACEHOLDER_EMAIL_VALUES:
+        logger.warning("A placeholder email setting ('%s') was found and ignored. The email feature may be disabled.", cleaned)
         return ""
     return cleaned
 
